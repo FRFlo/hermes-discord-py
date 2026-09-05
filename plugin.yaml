@@ -1,0 +1,26 @@
+name: discord-js
+label: Discord (discord.js)
+kind: platform
+version: 0.1.0
+description: >
+  Adaptateur de plateforme Discord pour Hermes Agent propulsé par un pont sidecar Node.js / discord.js.
+author: FRFlo
+requires_env:
+  - name: DISCORD_BOT_TOKEN
+    description: "Jeton d'authentification du bot Discord (Token)"
+    prompt: "Jeton du bot Discord"
+    url: "https://discord.com/developers/applications"
+    password: true
+optional_env:
+  - name: DISCORD_ALLOWED_USERS
+    description: "Identifiants d'utilisateurs Discord autorisés (séparés par des virgules)"
+    prompt: "Utilisateurs autorisés (séparés par des virgules)"
+    password: false
+  - name: DISCORD_ALLOW_ALL_USERS
+    description: "Autoriser tous les utilisateurs Discord à solliciter le bot (dev uniquement)"
+    prompt: "Autoriser tous les utilisateurs ? (true/false)"
+    password: false
+  - name: DISCORD_HOME_CHANNEL
+    description: "Identifiant du salon par défaut pour les crons et notifications"
+    prompt: "ID du salon principal"
+    password: false
