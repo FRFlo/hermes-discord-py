@@ -70,7 +70,8 @@ class DiscordJsAdapter(BasePlatformAdapter):
     """Adaptateur de plateforme reliant Hermes à un sidecar Node.js discord.js fine-tuné."""
 
     def __init__(self, config: PlatformConfig):
-        super().__init__(config, Platform("discord-js"))
+        platform = Platform.DISCORD if hasattr(Platform, "DISCORD") else Platform("discord")
+        super().__init__(config, platform)
         self._port = int(os.environ.get("HERMES_DISCORD_JS_PORT", _DEFAULT_SIDECAR_PORT))
         self._token = secrets.token_hex(16)
         self._proc: Optional[subprocess.Popen] = None
@@ -996,9 +997,24 @@ class DiscordJsAdapter(BasePlatformAdapter):
 
 def register(ctx) -> None:
     """Point d'entrée du plugin appelé par le système de découverte d'Hermes Agent."""
+    # Enregistre sous "discord" pour remplacer l'adaptateur discord.py built-in
+    ctx.register_platform(
+        name="discord",
+        label="Discord (discord.js fine-tuned)",
+        adapter_factory=lambda cfg: DiscordJsAdapter(cfg),
+        check_fn=check_requirements,
+        required_env=["DISCORD_BOT_TOKEN"],
+        allowed_users_env="DISCORD_ALLOWED_USERS",
+        allow_all_env="DISCORD_ALLOW_ALL_USERS",
+        cron_deliver_env_var="DISCORD_HOME_CHANNEL",
+        max_message_length=2000,
+        emoji="💬",
+        allow_update_command=True,
+    )
+    # Enregistre également sous "discord-js" pour compatibilité
     ctx.register_platform(
         name="discord-js",
-        label="Discord (discord.js fine-tuned)",
+        label="Discord.js (fine-tuned)",
         adapter_factory=lambda cfg: DiscordJsAdapter(cfg),
         check_fn=check_requirements,
         required_env=["DISCORD_BOT_TOKEN"],
