@@ -1,9 +1,9 @@
 name: discord-js
-label: Discord (discord.js)
+label: Discord (discord.js fine-tuned)
 kind: platform
-version: 0.1.0
+version: 0.2.0
 description: >
-  Adaptateur de plateforme Discord pour Hermes Agent propulsé par un pont sidecar Node.js / discord.js.
+  Adaptateur de plateforme Discord fine-tuné pour Hermes Agent : gestion des sessions par posts Forum, communications système en DM, isolation des outils en spoilers repliables, boutons interactifs et commandes slash dédiées.
 author: FRFlo
 requires_env:
   - name: DISCORD_BOT_TOKEN
@@ -13,14 +13,26 @@ requires_env:
     password: true
 optional_env:
   - name: DISCORD_ALLOWED_USERS
-    description: "Identifiants d'utilisateurs Discord autorisés (séparés par des virgules)"
-    prompt: "Utilisateurs autorisés (séparés par des virgules)"
+    description: "Identifiant Discord unique autorisé (par défaut 544862774002581504)"
+    prompt: "Utilisateur autorisé"
     password: false
-  - name: DISCORD_ALLOW_ALL_USERS
-    description: "Autoriser tous les utilisateurs Discord à solliciter le bot (dev uniquement)"
-    prompt: "Autoriser tous les utilisateurs ? (true/false)"
+  - name: DISCORD_FORUM_CHANNEL_ID
+    description: "Identifiant du salon Forum Discord pour les sessions de travail (par défaut 1544452203207589938)"
+    prompt: "ID du salon Forum"
     password: false
   - name: DISCORD_HOME_CHANNEL
-    description: "Identifiant du salon par défaut pour les crons et notifications"
-    prompt: "ID du salon principal"
+    description: "Identifiant du canal par défaut pour les crons et notifications (ou 'dm' pour vos DMs)"
+    prompt: "ID du salon ou 'dm'"
+    password: false
+  - name: DISCORD_REACTIONS
+    description: "Activer les réactions émojis de statut (⏳, ✅, ❌) sur les messages utilisateur (true/false)"
+    prompt: "Activer les réactions ? (true/false)"
+    password: false
+  - name: HERMES_DISCORD_JS_PORT
+    description: "Port d'écoute local du sidecar Node.js (par défaut 8790)"
+    prompt: "Port local"
+    password: false
+  - name: HERMES_UPLOADS_DIR
+    description: "Répertoire de cache et de stockage des pièces jointes (par défaut /workspace/uploads)"
+    prompt: "Répertoire de stockage des uploads"
     password: false

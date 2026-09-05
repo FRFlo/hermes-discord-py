@@ -1,7 +1,20 @@
 import http from "node:http";
 import { URL } from "node:url";
 import { DiscordBridgeClient } from "./discord.js";
-import { InboundMessageEvent, OutboundSendRequest, OutboundSendResponse } from "./types.js";
+import {
+  InboundEvent,
+  OutboundSendRequest,
+  OutboundSendResponse,
+  ToolProgressRequest,
+  ToolProgressResponse,
+  ReactionRequest,
+  ClarifyRequest,
+  ExecApprovalRequest,
+  ArchiveThreadRequest,
+  AlertRequest,
+  QuestionRequest,
+  CronJobItem,
+} from "./types.js";
 
 const PORT = parseInt(process.env.HERMES_SIDECAR_PORT || "8790", 10);
 const HOST = "127.0.0.1";
@@ -11,7 +24,7 @@ const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || "";
 const discord = new DiscordBridgeClient();
 const inboundSubscribers = new Set<http.ServerResponse>();
 
-discord.setInboundHandler((event: InboundMessageEvent) => {
+discord.setInboundHandler((event: InboundEvent) => {
   const payload = `data: ${JSON.stringify(event)}\n\n`;
   for (const res of inboundSubscribers) {
     try {
@@ -54,7 +67,7 @@ const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url || "/", `http://${HOST}:${PORT}`);
   const pathname = parsedUrl.pathname;
 
-  // Vérification de santé (Liveness / Readiness)
+  // 1. Contrôle de santé (Healthcheck)
   if (pathname === "/healthz" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "ok", discordReady: discord.isReady }));
@@ -63,7 +76,7 @@ const server = http.createServer(async (req, res) => {
 
   if (!verifyAuth(req, res)) return;
 
-  // Flux SSE des messages et événements entrants
+  // 2. Flux SSE des événements entrants
   if (pathname === "/inbound" && req.method === "GET") {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -79,12 +92,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Envoi de message sortant
+  // 3. Envoi de message sortant (avec formatage Thinking, découpage Markdown et pièces jointes)
   if (pathname === "/send" && req.method === "POST") {
     try {
       const body = await readJsonBody<OutboundSendRequest>(req);
-      const result = await discord.sendMessage(body.chat_id, body.content, body.reply_to);
-      const response: OutboundSendResponse = { success: true, message_id: result.messageId };
+      const withButtons = body.with_action_buttons !== false;
+      const result = await discord.sendMessage(body.chat_id, body.content, body.reply_to, body.files, withButtons);
+
+      // Si un trigger_message_id est présent dans les métadonnées, marquer le statut ✅
+      const triggerMessageId = body.metadata?.trigger_message_id as string | undefined;
+      if (triggerMessageId) {
+        await discord.setFinalStatusReaction(body.chat_id, triggerMessageId, true);
+      }
+
+      const response: OutboundSendResponse = {
+        success: true,
+        message_ids: result.messageIds,
+        message_id: result.messageIds[0],
+      };
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(response));
     } catch (err: unknown) {
@@ -95,7 +120,172 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Indicateur de frappe (typing)
+  // 4. Progression et journal des outils (Live edit -> Spoiler repliable)
+  if (pathname === "/tool_progress" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<ToolProgressRequest>(req);
+      const result = await discord.updateToolProgress(
+        body.chat_id,
+        body.tool_name,
+        body.tool_args,
+        body.status,
+        body.output,
+        body.is_final
+      );
+      const response: ToolProgressResponse = {
+        success: true,
+        progress_message_id: result.progressMessageId,
+      };
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(response));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, error: msg }));
+    }
+    return;
+  }
+
+  // 5. Statut final (remplacement de ⏳ par ✅ ou ❌)
+  if (pathname === "/final_status" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<{ chat_id: string; message_id: string; success: boolean }>(req);
+      await discord.setFinalStatusReaction(body.chat_id, body.message_id, body.success);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true }));
+    } catch {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false }));
+    }
+    return;
+  }
+
+  // 5b. Démarrage de tour (remplacement de ⏱️ par ⏳)
+  if (pathname === "/turn_start" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<{ chat_id: string; message_id: string }>(req);
+      await discord.setTurnStartReaction(body.chat_id, body.message_id);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true }));
+    } catch {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false }));
+    }
+    return;
+  }
+
+  // 6. Réactions directes
+  if (pathname === "/reaction" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<ReactionRequest>(req);
+      await discord.setReaction(body.chat_id, body.message_id, body.emoji, body.action);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true }));
+    } catch {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false }));
+    }
+    return;
+  }
+
+  // 7. Approbation de commande sensible (Boutons Approve / Deny)
+  if (pathname === "/exec_approval" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<ExecApprovalRequest>(req);
+      const result = await discord.sendExecApproval(body.chat_id, body.command, body.description, body.reply_to);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, message_id: result.messageId }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, error: msg }));
+    }
+    return;
+  }
+
+  // 8. Question / Clarification interactive (style pi-bridge avec select menus, modales, etc.)
+  if (pathname === "/ask" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<QuestionRequest>(req);
+      const result = await discord.askQuestion(body);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "cancelled", answers: [], error: msg }));
+    }
+    return;
+  }
+
+  if (pathname === "/clarify" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<ClarifyRequest>(req);
+      const result = await discord.sendClarify(
+        body.chat_id,
+        body.question,
+        body.options,
+        body.reply_to,
+        body.details,
+        body.context,
+        body.multiSelect,
+        body.timeoutSeconds
+      );
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, ...result }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, error: msg }));
+    }
+    return;
+  }
+
+  // 9. Archivage de fil
+  if (pathname === "/archive_thread" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<ArchiveThreadRequest>(req);
+      const success = await discord.archiveThread(body.chat_id, body.reason);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success }));
+    } catch {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false }));
+    }
+    return;
+  }
+
+  // 10. Alerte système rouge en DM privé avec boutons d'action
+  if (pathname === "/alert" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<AlertRequest>(req);
+      const result = await discord.sendSystemAlert(body.title, body.error_message, body.details, body.task_id);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, message_id: result.messageId }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, error: msg }));
+    }
+    return;
+  }
+
+  // 11. Suppression de message sur Discord
+  if (pathname === "/delete_message" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<{ chat_id: string; message_id: string }>(req);
+      const success = await discord.deleteMessage(body.chat_id, body.message_id);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, error: msg }));
+    }
+    return;
+  }
+
+  // 11. Indicateur de frappe (typing)
   if (pathname === "/typing" && req.method === "POST") {
     try {
       const body = await readJsonBody<{ chat_id: string }>(req);
@@ -109,7 +299,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Informations sur le salon
+  // 12. Synchronisation des tâches Cron depuis Hermes
+  if (pathname === "/cron/sync" && req.method === "POST") {
+    try {
+      const body = await readJsonBody<{ jobs: CronJobItem[] }>(req);
+      if (Array.isArray(body.jobs)) {
+        discord.cron.setJobs(body.jobs);
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, count: body.jobs?.length || 0 }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, error: msg }));
+    }
+    return;
+  }
+
+  // 11. Informations sur le salon
   if (pathname === "/chat_info" && req.method === "GET") {
     const chatId = parsedUrl.searchParams.get("chat_id") || "";
     try {
