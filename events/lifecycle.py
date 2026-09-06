@@ -93,6 +93,7 @@ async def handle_message_delete(
     else:
         # Message utilisateur : supprimer les réponses du bot sur Discord
         bot_reply_ids = adapter._reply_map.get(message_id, [])
+        deleted_ids = {str(b_id) for b_id in bot_reply_ids}
         for b_id in bot_reply_ids:
             await adapter.delete_message(chat_id, b_id)
 
@@ -104,7 +105,7 @@ async def handle_message_delete(
             try:
                 after = discord.Object(id=int(message_id))
                 async for message in channel.history(limit=None, after=after, oldest_first=True):
-                    if message.author and message.author.bot:
+                    if str(message.id) not in deleted_ids and message.author and message.author.bot:
                         await message.delete()
             except Exception:
                 logger.debug("Impossible de nettoyer les réponses postérieures", exc_info=True)
@@ -140,10 +141,14 @@ async def handle_message_edit(
         message_id=message_id,
     )
 
-    # 1. Interrompre toute tâche en cours
+    # 1. Interrompre silencieusement toute tâche en cours. Un faux ``/stop``
+    # passé par handle_message est visible et peut déclencher une seconde
+    # réponse lorsque l'édition est ensuite régénérée.
     try:
-        await adapter.handle_message(MessageEvent(source=source, text="/stop", message_type=MessageType.COMMAND))
-        await asyncio.sleep(0.2)
+        session_key = adapter._event_session_key(MessageEvent(source=source, text="", message_type=MessageType.TEXT))
+        await adapter.cancel_session_processing(
+            session_key, release_guard=True, discard_pending=True
+        )
     except Exception:
         pass
 
@@ -176,6 +181,19 @@ async def handle_message_edit(
     bot_reply_ids = adapter._reply_map.get(message_id, [])
     for b_id in bot_reply_ids:
         await adapter.delete_message(chat_id, b_id)
+
+    # Le cache est perdu après un redémarrage : supprimer toutes les réponses
+    # bot postérieures au message édité, pas seulement celles indexées en RAM.
+    deleted_ids = {str(b_id) for b_id in bot_reply_ids}
+    channel = await adapter._resolve_channel(chat_id)
+    if channel and hasattr(channel, "history"):
+        try:
+            after = discord.Object(id=int(message_id))
+            async for message in channel.history(limit=None, after=after, oldest_first=True):
+                if str(message.id) not in deleted_ids and message.author and message.author.bot:
+                    await message.delete()
+        except Exception:
+            logger.debug("Impossible de nettoyer les réponses postérieures à l'édition", exc_info=True)
     adapter._reply_map.pop(message_id, None)
 
     # 4. Tronquer l'historique

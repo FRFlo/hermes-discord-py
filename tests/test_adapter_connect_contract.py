@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 ADAPTER_FILE = Path(__file__).parents[1] / "adapter.py"
+LIFECYCLE_FILE = ADAPTER_FILE.parent / "events" / "lifecycle.py"
 
 
 def test_connect_accepts_gateway_reconnect_keyword() -> None:
@@ -81,3 +82,19 @@ def test_button_actions_use_gateway_commands() -> None:
     """Regeneration/closure must use control commands, not agent prose."""
     source = ADAPTER_FILE.read_text(encoding="utf-8")
     assert 'MessageType.COMMAND if action in {"regenerate", "close"}' in source
+
+
+def test_edit_lifecycle_does_not_dispatch_visible_stop() -> None:
+    """Editing must cancel directly, otherwise /stop leaks a duplicate reply."""
+    source = LIFECYCLE_FILE.read_text(encoding="utf-8")
+    edit_source = source.split("async def handle_message_edit", 1)[1]
+    assert "cancel_session_processing" in edit_source
+    assert 'text="/stop"' not in edit_source
+
+
+def test_edit_lifecycle_cleans_post_edit_bot_messages() -> None:
+    """Replies after an edited prompt are stale and must be removed."""
+    source = LIFECYCLE_FILE.read_text(encoding="utf-8")
+    edit_source = source.split("async def handle_message_edit", 1)[1]
+    assert "channel.history" in edit_source
+    assert "oldest_first=True" in edit_source
