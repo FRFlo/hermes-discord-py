@@ -220,16 +220,24 @@ class DiscordPyAdapter(BasePlatformAdapter):
 
             # Traitement asynchrone des pièces jointes
             attachment_injections: List[str] = []
+            media_urls: List[str] = []
+            media_types: List[str] = []
             if message.attachments:
                 for att in message.attachments:
-                    text_snippet = await download_and_cache_attachment(
+                    cached_att = await download_and_cache_attachment(
                         url=att.url,
                         filename=att.filename,
                         size=att.size,
+                        content_type=getattr(att, "content_type", None),
                         uploads_dir=self._uploads_dir,
                     )
-                    if text_snippet:
-                        attachment_injections.append(text_snippet)
+                    if cached_att.local_path:
+                        media_urls.append(cached_att.local_path)
+                        media_types.append(cached_att.content_type or "application/octet-stream")
+                    if cached_att.is_text and cached_att.text_content:
+                        attachment_injections.append(
+                            f"[Contenu de {cached_att.name}]:\n{cached_att.text_content}"
+                        )
 
             full_text = raw_text
             if attachment_injections:
@@ -245,15 +253,34 @@ class DiscordPyAdapter(BasePlatformAdapter):
                 message_id=str(message.id),
             )
 
+            reply_to_id = None
+            reply_to_text = None
+            if message.reference and message.reference.message_id:
+                reply_to_id = str(message.reference.message_id)
+                if getattr(message.reference, "resolved", None):
+                    reply_to_text = getattr(message.reference.resolved, "content", None) or None
+
+            first_att = message.attachments[0] if message.attachments else None
+            msg_type = MessageType.TEXT
+            if first_att:
+                ct = getattr(first_att, "content_type", "") or ""
+                if ct.startswith("image/"):
+                    msg_type = MessageType.PHOTO
+                elif ct.startswith("video/"):
+                    msg_type = MessageType.VIDEO
+                elif ct.startswith("audio/"):
+                    msg_type = MessageType.AUDIO
+                else:
+                    msg_type = MessageType.DOCUMENT
+
             event = MessageEvent(
                 source=source,
                 text=full_text,
-                message_type=MessageType.TEXT,
-                reply_to_message_id=(
-                    str(message.reference.message_id)
-                    if message.reference and message.reference.message_id
-                    else None
-                ),
+                message_type=msg_type,
+                media_urls=media_urls,
+                media_types=media_types,
+                reply_to_message_id=reply_to_id,
+                reply_to_text=reply_to_text,
                 raw_message={"message_id": str(message.id), "attachments_count": len(message.attachments)},
             )
             await self.handle_message(event)
@@ -412,7 +439,7 @@ class DiscordPyAdapter(BasePlatformAdapter):
         return await self.send_message(chat_id=chat_id, text=content, reply_to=reply_to)
 
 
-    async def send_typing(self, chat_id: str) -> None:
+    async def send_typing(self, chat_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Envoie l'indicateur d'écriture dans le salon spécifié."""
         channel = await self._resolve_channel(chat_id)
         if channel and hasattr(channel, "typing"):
@@ -619,27 +646,54 @@ class DiscordPyAdapter(BasePlatformAdapter):
         self,
         chat_id: str,
         question: str,
-        options: List[Dict[str, Any]],
-        reply_to: Optional[str] = None,
-        details: Optional[str] = None,
-        context: Optional[str] = None,
-        multi_select: bool = False,
-        timeout_seconds: Optional[int] = None,
+        choices: Optional[Any] = None,
+        clarify_id: Optional[str] = None,
+        session_key: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> SendResult:
-        """Affiche les options de clarification style pi-bridge."""
+        """Affiche les options de clarification style pi-bridge.
+
+        Supporte à la fois la signature standard BasePlatformAdapter:
+            send_clarify(chat_id, question, choices, clarify_id, session_key, metadata)
+        Et l'ancienne signature personnalisée de l'adaptateur:
+            send_clarify(chat_id, question, options=..., reply_to=..., details=..., context=..., multi_select=...)
+        """
         channel = await self._resolve_channel(chat_id)
         if not channel:
             return SendResult(success=False, error=f"Canal {chat_id} introuvable")
+
+        # Normaliser les choix : soit 'choices' (liste de chaînes ou de dicts), soit 'options'
+        raw_options = kwargs.get("options")
+        if raw_options is None:
+            raw_options = choices or []
+
+        normalized_options: List[Dict[str, Any]] = []
+        if isinstance(raw_options, list):
+            for i, c in enumerate(raw_options):
+                if isinstance(c, dict):
+                    normalized_options.append(c)
+                elif isinstance(c, str):
+                    normalized_options.append({"label": c.strip(), "value": c.strip()})
+                else:
+                    normalized_options.append({"label": str(c).strip(), "value": str(c).strip()})
+
+        details = kwargs.get("details")
+        context = kwargs.get("context")
+        multi_select = kwargs.get("multi_select", False)
+        timeout_seconds = kwargs.get("timeout_seconds")
+        reply_to = kwargs.get("reply_to")
 
         view = QuestionInteractiveView(
             adapter=self,
             chat_id=chat_id,
             question=question,
-            options=options,
+            options=normalized_options,
             details=details,
             context=context,
             multi_select=multi_select,
             timeout_seconds=timeout_seconds,
+            clarify_id=clarify_id,
         )
 
         send_kwargs: Dict[str, Any] = {
@@ -735,6 +789,41 @@ class DiscordPyAdapter(BasePlatformAdapter):
             return True
         except Exception:
             return False
+
+    async def edit_message(
+        self,
+        chat_id: str,
+        message_id: str,
+        content: str,
+        *,
+        finalize: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Édite un message Discord existant avec formatage thinking et découpage sécurisé."""
+        channel = await self._resolve_channel(chat_id)
+        if not channel:
+            return SendResult(success=False, error=f"Canal {chat_id} introuvable")
+
+        try:
+            formatted = format_thinking_with_subtext(content)
+            # Si le message dépasse 2000 caractères et qu'on n'est pas en finalisation, tronquer
+            if len(formatted) > 2000 and not finalize:
+                formatted = formatted[:1990] + "..."
+            elif len(formatted) > 2000 and finalize:
+                # Si finalisation dépasse 2000, éditer le premier chunk puis envoyer la suite
+                chunks = split_markdown(formatted, max_length=1950)
+                msg = await channel.fetch_message(int(message_id))
+                await msg.edit(content=chunks[0])
+                for extra_chunk in chunks[1:]:
+                    await channel.send(content=extra_chunk)
+                return SendResult(success=True, message_id=message_id)
+
+            msg = await channel.fetch_message(int(message_id))
+            await msg.edit(content=formatted)
+            return SendResult(success=True, message_id=message_id)
+        except Exception as e:
+            logger.debug("[discord] Échec edit_message %s : %s", message_id, e)
+            return SendResult(success=False, error=str(e))
 
     # =========================================================================
     # Délégations Services (Cron, Sessions Forum)
@@ -881,6 +970,11 @@ class DiscordPyAdapter(BasePlatformAdapter):
         logger.info("[discord] Connexion discord.py arrêtée.")
 
 
+def _is_connected(config) -> bool:
+    """Vérifie si un token Discord est configuré."""
+    return bool((os.environ.get("DISCORD_BOT_TOKEN") or getattr(config, "bot_token", None) or "").strip())
+
+
 def register(ctx) -> None:
     """Point d'entrée du plugin appelé par le système de découverte d'Hermes Agent."""
     ctx.register_platform(
@@ -888,12 +982,13 @@ def register(ctx) -> None:
         label="Discord (discord.py fine-tuned)",
         adapter_factory=lambda cfg: DiscordPyAdapter(cfg),
         check_fn=check_discord_requirements,
+        is_connected=_is_connected,
         required_env=["DISCORD_BOT_TOKEN"],
         allowed_users_env="DISCORD_ALLOWED_USERS",
         allow_all_env="DISCORD_ALLOW_ALL_USERS",
         cron_deliver_env_var="DISCORD_HOME_CHANNEL",
         max_message_length=2000,
-        emoji="",
+        emoji="💬",
         allow_update_command=True,
     )
     # Enregistre également sous discord pour remplacer directement l'adaptateur par défaut
@@ -902,12 +997,13 @@ def register(ctx) -> None:
         label="Discord (discord.py fine-tuned)",
         adapter_factory=lambda cfg: DiscordPyAdapter(cfg),
         check_fn=check_discord_requirements,
+        is_connected=_is_connected,
         required_env=["DISCORD_BOT_TOKEN"],
         allowed_users_env="DISCORD_ALLOWED_USERS",
         allow_all_env="DISCORD_ALLOW_ALL_USERS",
         cron_deliver_env_var="DISCORD_HOME_CHANNEL",
         max_message_length=2000,
-        emoji="",
+        emoji="💬",
         allow_update_command=True,
     )
     # Enregistre également sous discord-js pour compatibilité avec d'anciennes configs
@@ -916,11 +1012,12 @@ def register(ctx) -> None:
         label="Discord (discord.py fine-tuned)",
         adapter_factory=lambda cfg: DiscordPyAdapter(cfg),
         check_fn=check_discord_requirements,
+        is_connected=_is_connected,
         required_env=["DISCORD_BOT_TOKEN"],
         allowed_users_env="DISCORD_ALLOWED_USERS",
         allow_all_env="DISCORD_ALLOW_ALL_USERS",
         cron_deliver_env_var="DISCORD_HOME_CHANNEL",
         max_message_length=2000,
-        emoji="",
+        emoji="💬",
         allow_update_command=True,
     )

@@ -38,3 +38,28 @@ def test_message_events_use_normalized_field_names() -> None:
                 continue
             names = {keyword.arg for keyword in call.keywords if keyword.arg is not None}
             assert not names & unsupported, f"{path}: unsupported fields {names & unsupported}"
+
+
+def test_signatures_align_with_base_platform_adapter() -> None:
+    """Verify signatures match BasePlatformAdapter expectations."""
+    tree = ast.parse(ADAPTER_FILE.read_text(encoding="utf-8"))
+    adapter_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "DiscordPyAdapter"
+    )
+    methods = {
+        node.name: node
+        for node in adapter_class.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    # send_typing
+    assert "metadata" in [a.arg for a in methods["send_typing"].args.args]
+
+    # edit_message
+    assert "finalize" in [a.arg for a in methods["edit_message"].args.kwonlyargs]
+
+    # send_clarify
+    clarify_args = [a.arg for a in methods["send_clarify"].args.args]
+    assert "choices" in clarify_args and "clarify_id" in clarify_args

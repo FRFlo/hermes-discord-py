@@ -71,6 +71,7 @@ class QuestionInteractiveView(View):
         context: Optional[str] = None,
         multi_select: bool = False,
         timeout_seconds: Optional[int] = None,
+        clarify_id: Optional[str] = None,
     ):
         super().__init__(timeout=float(timeout_seconds) if timeout_seconds else 600.0)
         self.adapter = adapter
@@ -80,6 +81,7 @@ class QuestionInteractiveView(View):
         self.details = details
         self.context = context
         self.multi_select = multi_select
+        self.clarify_id = clarify_id
         self.selected_values: List[str] = []
         try:
             loop = asyncio.get_running_loop()
@@ -203,6 +205,14 @@ class QuestionInteractiveView(View):
 
         if not self.future.done():
             self.future.set_result({"status": "resolved", "answers": answers})
+
+        if self.clarify_id:
+            try:
+                from tools.clarify_gateway import resolve_gateway_clarify
+                ans_str = ", ".join(answers) if len(answers) > 1 else (answers[0] if answers else "")
+                resolve_gateway_clarify(self.clarify_id, ans_str)
+            except Exception as e:
+                logger.debug("Échec resolve_gateway_clarify pour %s : %s", self.clarify_id, e)
 
     async def on_timeout(self) -> None:
         for item in self.children:

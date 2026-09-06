@@ -67,9 +67,11 @@ async def download_and_cache_attachment(
     size: int,
     content_type: Optional[str] = None,
     session: Optional[aiohttp.ClientSession] = None,
+    uploads_dir: Optional[str] = None,
 ) -> CachedAttachment:
     """Télécharge une pièce jointe Discord, l'enregistre localement et extrait son texte si applicable."""
-    upload_dir = get_target_upload_dir()
+    upload_dir = Path(uploads_dir) if uploads_dir else get_target_upload_dir()
+    upload_dir.mkdir(parents=True, exist_ok=True)
     safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", filename)
     target_path = upload_dir / f"{int(time.time())}_{safe_name}"
 
