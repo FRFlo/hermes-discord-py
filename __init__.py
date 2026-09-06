@@ -1,5 +1,8 @@
-"""Plugin de plateforme Discord.js pour Hermes Agent."""
+"""Plugin de plateforme Discord (discord.py fine-tuned) pour Hermes Agent."""
 
-from .adapter import register
+try:
+    from .adapter import DiscordPyAdapter, register
+except ImportError:
+    from adapter import DiscordPyAdapter, register
 
-__all__ = ["register"]
+__all__ = ["register", "DiscordPyAdapter"]

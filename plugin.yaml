@@ -1,9 +1,9 @@
-name: discord-js
-label: Discord (discord.js fine-tuned)
+name: discord
+label: Discord (discord.py fine-tuned)
 kind: platform
-version: 0.2.0
+version: 0.3.0
 description: >
-  Adaptateur de plateforme Discord fine-tuné pour Hermes Agent : gestion des sessions par posts Forum, communications système en DM, isolation des outils en spoilers repliables, boutons interactifs et commandes slash dédiées.
+  Adaptateur de plateforme Discord 100% natif en Python (discord.py) fine-tuné pour Hermes Agent : gestion des sessions par posts Forum, communications système en DM, isolation des outils en spoilers repliables, boutons interactifs et commandes slash dédiées.
 author: FRFlo
 requires_env:
   - name: DISCORD_BOT_TOKEN
@@ -27,10 +27,6 @@ optional_env:
   - name: DISCORD_REACTIONS
     description: "Activer les réactions émojis de statut (⏳, ✅, ❌) sur les messages utilisateur (true/false)"
     prompt: "Activer les réactions ? (true/false)"
-    password: false
-  - name: HERMES_DISCORD_JS_PORT
-    description: "Port d'écoute local du sidecar Node.js (par défaut 8790)"
-    prompt: "Port local"
     password: false
   - name: HERMES_UPLOADS_DIR
     description: "Répertoire de cache et de stockage des pièces jointes (par défaut /workspace/uploads)"
