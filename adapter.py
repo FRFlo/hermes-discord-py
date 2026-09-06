@@ -313,7 +313,13 @@ class DiscordPyAdapter(BasePlatformAdapter):
             author_id = str(message.author.id) if message.author else None
             is_bot = (message.author and message.author.bot) or (self._bot.user and message.author and message.author.id == self._bot.user.id)
 
-            if author_id and not is_bot and not self.is_user_authorized(author_id):
+            # Les réponses supprimées par le nettoyage d'un tour ne sont pas des
+            # événements entrants.  Sans ce garde, leur suppression relance
+            # handle_message(/stop) et l'agent finit par se répondre à lui-même.
+            if is_bot:
+                return
+
+            if author_id and not self.is_user_authorized(author_id):
                 return
 
             await handle_message_delete(
@@ -380,6 +386,7 @@ class DiscordPyAdapter(BasePlatformAdapter):
         text: str,
         reply_to: Optional[str] = None,
         parse_mode: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         """Envoie un message formaté avec sous-texte de thinking et découpage de code propre."""
         channel = await self._resolve_channel(chat_id)
@@ -413,7 +420,10 @@ class DiscordPyAdapter(BasePlatformAdapter):
             if is_last:
                 if attachments:
                     send_kwargs["files"] = attachments
-                if not is_dm:
+                # Les contrôles ne concernent que la réponse finale d'un tour.
+                # ``notify`` est posé par le pipeline Hermes sur cette réponse,
+                # contrairement aux statuts, erreurs et messages intermédiaires.
+                if not is_dm and metadata and metadata.get("notify"):
                     send_kwargs["view"] = PostResponseActionView(self, chat_id)
 
             try:
@@ -436,7 +446,9 @@ class DiscordPyAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         """Envoie un message sur Discord (implémentation de la méthode abstraite BasePlatformAdapter)."""
-        return await self.send_message(chat_id=chat_id, text=content, reply_to=reply_to)
+        return await self.send_message(
+            chat_id=chat_id, text=content, reply_to=reply_to, metadata=metadata
+        )
 
 
     async def send_typing(self, chat_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
@@ -914,7 +926,7 @@ class DiscordPyAdapter(BasePlatformAdapter):
         event = MessageEvent(
             source=source,
             text=btn_text,
-            message_type=MessageType.TEXT,
+            message_type=MessageType.COMMAND if action in {"regenerate", "close"} else MessageType.TEXT,
             raw_message={"action": action, "payload": payload},
         )
         await self.handle_message(event)

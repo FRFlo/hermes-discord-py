@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
+
+import discord
 
 try:
     from hermes_agent.gateway.platforms.base import MessageEvent, MessageType
@@ -35,7 +36,9 @@ async def handle_message_delete(
     """Supprime le tour complet dans la session Hermes et nettoie les réponses sur Discord."""
     logger.info("[discord.events] Suppression détectée pour message_id=%s dans chat_id=%s", message_id, chat_id)
 
-    # 1. Interruption immédiate si un travail tourne
+    # 1. Interruption silencieuse si un travail tourne.  Envoyer un faux
+    # ``/stop`` via handle_message produit une réponse visible (et peut être
+    # interprété comme un nouveau tour).
     source = adapter.build_source(
         chat_id=chat_id,
         user_id=sender_id,
@@ -45,8 +48,10 @@ async def handle_message_delete(
         message_id=message_id,
     )
     try:
-        await adapter.handle_message(MessageEvent(source=source, text="/stop", message_type=MessageType.COMMAND))
-        await asyncio.sleep(0.2)
+        session_key = adapter._event_session_key(MessageEvent(source=source, text="", message_type=MessageType.TEXT))
+        await adapter.cancel_session_processing(
+            session_key, release_guard=True, discard_pending=True
+        )
     except Exception:
         pass
 
@@ -90,6 +95,19 @@ async def handle_message_delete(
         bot_reply_ids = adapter._reply_map.get(message_id, [])
         for b_id in bot_reply_ids:
             await adapter.delete_message(chat_id, b_id)
+
+        # Le cache de correspondance est en mémoire et peut être vide après un
+        # redémarrage. Supprimer aussi les réponses bot postérieures au prompt
+        # garantit le nettoyage de la branche de conversation dans le thread.
+        channel = await adapter._resolve_channel(chat_id)
+        if channel and hasattr(channel, "history"):
+            try:
+                after = discord.Object(id=int(message_id))
+                async for message in channel.history(limit=None, after=after, oldest_first=True):
+                    if message.author and message.author.bot:
+                        await message.delete()
+            except Exception:
+                logger.debug("Impossible de nettoyer les réponses postérieures", exc_info=True)
         adapter._reply_map.pop(message_id, None)
 
         # Supprimer de l'historique jusqu'au prochain message utilisateur

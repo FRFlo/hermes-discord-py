@@ -63,3 +63,21 @@ def test_signatures_align_with_base_platform_adapter() -> None:
     # send_clarify
     clarify_args = [a.arg for a in methods["send_clarify"].args.args]
     assert "choices" in clarify_args and "clarify_id" in clarify_args
+
+
+def test_actions_are_attached_only_to_notified_final_replies() -> None:
+    """Intermediate/status sends must not expose turn actions."""
+    source = ADAPTER_FILE.read_text(encoding="utf-8")
+    assert 'if not is_dm and metadata and metadata.get("notify"):' in source
+
+
+def test_bot_message_deletions_are_not_reprocessed_as_inbound_events() -> None:
+    """Cleaning a bot reply must not synthesize another /stop turn."""
+    source = ADAPTER_FILE.read_text(encoding="utf-8")
+    assert "if is_bot:\n                return" in source
+
+
+def test_button_actions_use_gateway_commands() -> None:
+    """Regeneration/closure must use control commands, not agent prose."""
+    source = ADAPTER_FILE.read_text(encoding="utf-8")
+    assert 'MessageType.COMMAND if action in {"regenerate", "close"}' in source
