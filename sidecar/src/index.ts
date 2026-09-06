@@ -335,6 +335,26 @@ const server = http.createServer(async (req, res) => {
 });
 
 async function main() {
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`[hermes-discord-js] Erreur : Le port ${PORT} est déjà utilisé (EADDRINUSE).`);
+      console.error(`[hermes-discord-js] Un autre processus sidecar ou service écoute déjà sur http://${HOST}:${PORT}.`);
+    } else {
+      console.error("[hermes-discord-js] Erreur serveur HTTP :", err);
+    }
+    process.exit(1);
+  });
+
+  // Détection de la terminaison du processus parent (Hermes) via le flux stdin
+  process.stdin.resume();
+  process.stdin.on("end", () => {
+    console.log("[hermes-discord-js] Flux stdin fermé (processus parent terminé). Arrêt du sidecar...");
+    process.exit(0);
+  });
+  process.stdin.on("close", () => {
+    process.exit(0);
+  });
+
   server.listen(PORT, HOST, () => {
     console.log(`[hermes-discord-js] Pont sidecar à l'écoute sur http://${HOST}:${PORT}`);
   });

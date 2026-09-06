@@ -7,6 +7,7 @@ Les messages sortants et actions transitent via des requêtes HTTP POST locales.
 
 from __future__ import annotations
 
+import atexit
 import asyncio
 import inspect
 import json
@@ -14,8 +15,11 @@ import logging
 import os
 import secrets
 import shutil
+import signal
+import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -66,6 +70,84 @@ def check_requirements() -> bool:
     return _find_node() is not None
 
 
+def _is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
+    """Vérifie si un port TCP local est actuellement utilisé."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) == 0
+
+
+def _kill_process_on_port(port: int) -> bool:
+    """Tente de libérer un port en arrêtant le processus qui l'occupe (cross-platform)."""
+    current_pid = os.getpid()
+    if sys.platform == "win32":
+        try:
+            out = subprocess.check_output(
+                f"netstat -ano | findstr :{port}", shell=True, text=True, stderr=subprocess.DEVNULL
+            )
+            pids = set()
+            for line in out.strip().splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 5 and "LISTENING" in line.upper():
+                    pids.add(parts[-1])
+            for pid in pids:
+                if pid and pid != "0" and pid != str(current_pid):
+                    subprocess.run(f"taskkill /F /PID {pid}", shell=True, capture_output=True)
+            return True
+        except Exception:
+            return False
+    else:
+        # Linux / macOS
+        killed = False
+        if shutil.which("fuser"):
+            try:
+                res = subprocess.run(["fuser", "-k", "-n", "tcp", str(port)], capture_output=True)
+                if res.returncode == 0:
+                    killed = True
+            except Exception:
+                pass
+        if not killed and shutil.which("lsof"):
+            try:
+                out = subprocess.check_output(["lsof", "-ti", f":{port}"], text=True, stderr=subprocess.DEVNULL)
+                for pid_str in out.strip().split():
+                    try:
+                        pid = int(pid_str.strip())
+                        if pid != current_pid:
+                            os.kill(pid, signal.SIGKILL)
+                            killed = True
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if not killed and shutil.which("ss"):
+            try:
+                out = subprocess.check_output(["ss", "-lptn", f"sport = :{port}"], text=True, stderr=subprocess.DEVNULL)
+                import re
+                for pid_str in set(re.findall(r"pid=(\d+)", out)):
+                    try:
+                        pid = int(pid_str)
+                        if pid != current_pid:
+                            os.kill(pid, signal.SIGKILL)
+                            killed = True
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return killed
+
+
+def _set_pdeathsig() -> None:
+    """Configure PR_SET_PDEATHSIG sur Linux pour que le sous-processus reçoive SIGTERM si le parent meurt."""
+    if sys.platform.startswith("linux"):
+        try:
+            import ctypes
+            libc = ctypes.CDLL("libc.so.6")
+            # PR_SET_PDEATHSIG = 1, SIGTERM = 15
+            libc.prctl(1, signal.SIGTERM)
+        except Exception:
+            pass
+
+
 class DiscordJsAdapter(BasePlatformAdapter):
     """Adaptateur de plateforme reliant Hermes à un sidecar Node.js discord.js fine-tuné."""
 
@@ -86,6 +168,7 @@ class DiscordJsAdapter(BasePlatformAdapter):
         # sont mis en attente et exécutés séquentiellement au tour suivant sans interrompre la tâche en cours.
         self._busy_text_mode = "queue"
         self._busy_input_mode = "queue"
+        atexit.register(self._cleanup_proc)
 
     @property
     def _base_url(self) -> str:
@@ -143,14 +226,59 @@ class DiscordJsAdapter(BasePlatformAdapter):
             npx = shutil.which("npx") or "npx"
             cmd = [npx, "tsx", str(src_entry)]
 
+        # Libérer le port si une instance orpheline est restée active
+        if _is_port_in_use(self._port):
+            logger.warning("[discord-js] Le port %d est déjà occupé. Nettoyage de l'instance orpheline...", self._port)
+            _kill_process_on_port(self._port)
+            for _ in range(10):
+                await asyncio.sleep(0.2)
+                if not _is_port_in_use(self._port):
+                    logger.info("[discord-js] Port %d libéré avec succès.", self._port)
+                    break
+            else:
+                logger.error(
+                    "[discord-js] Impossible de libérer le port %d. Un autre service semble l'utiliser.",
+                    self._port,
+                )
+
         logger.info("[discord-js] Lancement du sidecar discord.js : %s", " ".join(cmd))
+        preexec = _set_pdeathsig if sys.platform.startswith("linux") else None
         self._proc = subprocess.Popen(
             cmd,
             cwd=str(_SIDECAR_DIR),
             env=env,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            preexec_fn=preexec,
         )
+
+        def _log_stream(pipe, log_fn, prefix: str):
+            try:
+                for raw_line in iter(pipe.readline, b""):
+                    line = raw_line.decode("utf-8", errors="replace").rstrip()
+                    if line:
+                        log_fn("%s %s", prefix, line)
+            except Exception:
+                pass
+            finally:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
+        if self._proc.stdout:
+            threading.Thread(
+                target=_log_stream,
+                args=(self._proc.stdout, logger.debug, "[discord-js/sidecar]"),
+                daemon=True,
+            ).start()
+        if self._proc.stderr:
+            threading.Thread(
+                target=_log_stream,
+                args=(self._proc.stderr, logger.warning, "[discord-js/sidecar]"),
+                daemon=True,
+            ).start()
 
         self._client = httpx.AsyncClient(base_url=self._base_url, headers=self._headers, timeout=30.0)
 
@@ -158,8 +286,7 @@ class DiscordJsAdapter(BasePlatformAdapter):
         for _ in range(30):
             await asyncio.sleep(0.5)
             if self._proc.poll() is not None:
-                stderr = self._proc.stderr.read().decode("utf-8", errors="replace") if self._proc.stderr else ""
-                logger.error("[discord-js] Le sidecar s'est arrêté prématurément : %s", stderr)
+                logger.error("[discord-js] Le sidecar s'est arrêté prématurément (code: %s).", self._proc.returncode)
                 return False
             try:
                 resp = await self._client.get("/healthz")
@@ -171,7 +298,7 @@ class DiscordJsAdapter(BasePlatformAdapter):
 
         if not connected:
             logger.error("[discord-js] Délai dépassé lors du contrôle de santé du sidecar.")
-            self._proc.kill()
+            self._cleanup_proc()
             return False
 
         self._inbound_task = asyncio.create_task(self._listen_inbound())
@@ -974,6 +1101,22 @@ class DiscordJsAdapter(BasePlatformAdapter):
             pass
         return {"name": "unknown", "type": "unknown", "chat_id": chat_id}
 
+    def _cleanup_proc(self) -> None:
+        """Arrête le sous-processus sidecar lors de l'arrêt du processus principal."""
+        if self._proc and self._proc.poll() is None:
+            logger.info("[discord-js] Arrêt du processus sidecar...")
+            try:
+                if self._proc.stdin and not self._proc.stdin.closed:
+                    self._proc.stdin.close()
+                self._proc.terminate()
+                self._proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+            self._proc = None
+
     async def disconnect(self) -> None:
         """Arrête proprement le sidecar et les tâches en arrière-plan."""
         self._mark_disconnected()
@@ -985,14 +1128,7 @@ class DiscordJsAdapter(BasePlatformAdapter):
             await self._client.aclose()
             self._client = None
 
-        if self._proc and self._proc.poll() is None:
-            logger.info("[discord-js] Arrêt du processus sidecar...")
-            self._proc.terminate()
-            try:
-                self._proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-            self._proc = None
+        self._cleanup_proc()
 
 
 def register(ctx) -> None:
