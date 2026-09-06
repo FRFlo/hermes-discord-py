@@ -1,4 +1,4 @@
-name: discord
+name: discord-py
 label: Discord (discord.py fine-tuned)
 kind: platform
 version: 0.3.0

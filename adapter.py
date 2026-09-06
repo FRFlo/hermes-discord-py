@@ -875,6 +875,20 @@ class DiscordPyAdapter(BasePlatformAdapter):
 def register(ctx) -> None:
     """Point d'entrée du plugin appelé par le système de découverte d'Hermes Agent."""
     ctx.register_platform(
+        name="discord-py",
+        label="Discord (discord.py fine-tuned)",
+        adapter_factory=lambda cfg: DiscordPyAdapter(cfg),
+        check_fn=check_discord_requirements,
+        required_env=["DISCORD_BOT_TOKEN"],
+        allowed_users_env="DISCORD_ALLOWED_USERS",
+        allow_all_env="DISCORD_ALLOW_ALL_USERS",
+        cron_deliver_env_var="DISCORD_HOME_CHANNEL",
+        max_message_length=2000,
+        emoji="",
+        allow_update_command=True,
+    )
+    # Enregistre également sous discord pour remplacer directement l'adaptateur par défaut
+    ctx.register_platform(
         name="discord",
         label="Discord (discord.py fine-tuned)",
         adapter_factory=lambda cfg: DiscordPyAdapter(cfg),

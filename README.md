@@ -1,4 +1,4 @@
-# hermes-discord (discord.py fine-tuned)
+# hermes-discord-py (discord.py fine-tuned)
 
 Adaptateur de plateforme Discord 100% natif en **Python** propulsé par **discord.py 2.x**, optimisé et fine-tuné pour [Hermes Agent](https://github.com/NousResearch/hermes-agent).
 
@@ -11,7 +11,7 @@ Conçu sans aucun processus sidecar ni dépendance Node.js externe : tout tourne
 L'adaptateur a été découpé et structuré en modules thématiques clairs pour une maintenabilité et une lisibilité optimales :
 
 ```
-hermes-discord/
+hermes-discord-py/
 ├── adapter.py              # Classe DiscordPyAdapter principale & point d'entrée register(ctx)
 ├── splitter.py             # Découpage Markdown intelligent, sous-texte thinking & log files
 ├── downloader.py           # Téléchargement et mise en cache d'attachements Discord
