@@ -249,8 +249,12 @@ class DiscordPyAdapter(BasePlatformAdapter):
                 source=source,
                 text=full_text,
                 message_type=MessageType.TEXT,
-                reply_to=str(message.reference.message_id) if message.reference and message.reference.message_id else None,
-                raw={"message_id": str(message.id), "attachments_count": len(message.attachments)},
+                reply_to_message_id=(
+                    str(message.reference.message_id)
+                    if message.reference and message.reference.message_id
+                    else None
+                ),
+                raw_message={"message_id": str(message.id), "attachments_count": len(message.attachments)},
             )
             await self.handle_message(event)
 
@@ -785,7 +789,7 @@ class DiscordPyAdapter(BasePlatformAdapter):
             source=source,
             text=cmd_text,
             message_type=MessageType.COMMAND,
-            raw={"command": command, "args": args},
+            raw_message={"command": command, "args": args},
         )
         await self.handle_message(event)
 
@@ -822,7 +826,7 @@ class DiscordPyAdapter(BasePlatformAdapter):
             source=source,
             text=btn_text,
             message_type=MessageType.TEXT,
-            raw={"action": action, "payload": payload},
+            raw_message={"action": action, "payload": payload},
         )
         await self.handle_message(event)
 

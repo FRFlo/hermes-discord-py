@@ -169,6 +169,6 @@ async def handle_message_edit(
         source=source,
         text=new_content,
         message_type=MessageType.TEXT,
-        raw={"message_id": message_id, "is_edit": True},
+        raw_message={"message_id": message_id, "is_edit": True},
     )
     await adapter.handle_message(event)

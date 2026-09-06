@@ -22,3 +22,19 @@ def test_connect_accepts_gateway_reconnect_keyword() -> None:
     )
 
     assert any(arg.arg == "is_reconnect" for arg in connect.args.kwonlyargs)
+
+
+def test_message_events_use_normalized_field_names() -> None:
+    """Keep plugin events compatible with the current gateway dataclass."""
+    files = [ADAPTER_FILE, ADAPTER_FILE.parent / "events" / "lifecycle.py"]
+    unsupported = {"reply_to", "raw"}
+
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call):
+                continue
+            if not isinstance(call.func, ast.Name) or call.func.id != "MessageEvent":
+                continue
+            names = {keyword.arg for keyword in call.keywords if keyword.arg is not None}
+            assert not names & unsupported, f"{path}: unsupported fields {names & unsupported}"
