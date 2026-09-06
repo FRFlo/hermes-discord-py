@@ -133,6 +133,23 @@ def _kill_process_on_port(port: int) -> bool:
                         pass
             except Exception:
                 pass
+        # Dernier recours : les sidecars Hermes sont identifiables par leur point d'entrée.
+        # Cela évite de laisser une ancienne instance Discord active lorsque les outils
+        # de diagnostic réseau ne sont pas disponibles dans l'image d'exécution.
+        if not killed and shutil.which("pgrep"):
+            try:
+                out = subprocess.check_output(
+                    ["pgrep", "-f", r"sidecar/(dist|src)/index\.(js|ts)"],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+                for pid_str in out.split():
+                    pid = int(pid_str)
+                    if pid != current_pid:
+                        os.kill(pid, signal.SIGKILL)
+                        killed = True
+            except Exception:
+                pass
         return killed
 
 
@@ -146,6 +163,14 @@ def _set_pdeathsig() -> None:
             libc.prctl(1, signal.SIGTERM)
         except Exception:
             pass
+
+
+def _find_available_port(start: int, host: str = "127.0.0.1") -> int:
+    """Retourne le premier port TCP libre à partir de ``start``."""
+    for port in range(start, start + 100):
+        if not _is_port_in_use(port, host):
+            return port
+    raise OSError(f"Aucun port libre trouvé entre {start} et {start + 99}")
 
 
 class DiscordJsAdapter(BasePlatformAdapter):
@@ -195,7 +220,12 @@ class DiscordJsAdapter(BasePlatformAdapter):
                 logger.warning("[discord-js] Échec de npm ci, bascule vers npm install...")
                 subprocess.run([npm, "install"], cwd=str(_SIDECAR_DIR), check=False)
 
-        if not dist.is_dir() or not (dist / "index.js").exists():
+        source_files = list((_SIDECAR_DIR / "src").rglob("*.ts"))
+        dist_entry = dist / "index.js"
+        needs_build = not dist_entry.exists() or any(
+            source.stat().st_mtime_ns > dist_entry.stat().st_mtime_ns for source in source_files
+        )
+        if needs_build:
             logger.info("[discord-js] Compilation du sidecar TypeScript...")
             subprocess.run([npm, "run", "build"], cwd=str(_SIDECAR_DIR), check=False)
 
@@ -209,7 +239,6 @@ class DiscordJsAdapter(BasePlatformAdapter):
         self._ensure_sidecar_deps()
 
         env = os.environ.copy()
-        env["HERMES_SIDECAR_PORT"] = str(self._port)
         env["HERMES_SIDECAR_TOKEN"] = self._token
         env["DISCORD_ALLOWED_USERS"] = self._allowed_user
         env["DISCORD_FORUM_CHANNEL_ID"] = self._forum_channel
@@ -240,6 +269,10 @@ class DiscordJsAdapter(BasePlatformAdapter):
                     "[discord-js] Impossible de libérer le port %d. Un autre service semble l'utiliser.",
                     self._port,
                 )
+                self._port = _find_available_port(self._port + 1)
+                logger.warning("[discord-js] Utilisation du port de secours %d.", self._port)
+
+        env["HERMES_SIDECAR_PORT"] = str(self._port)
 
         logger.info("[discord-js] Lancement du sidecar discord.js : %s", " ".join(cmd))
         preexec = _set_pdeathsig if sys.platform.startswith("linux") else None
@@ -345,7 +378,7 @@ class DiscordJsAdapter(BasePlatformAdapter):
                 user_id=sender_id,
                 user_name=sender_name,
                 chat_type="dm" if is_dm else "channel",
-                channel_name=data.get("channel_name", ""),
+                chat_name=data.get("channel_name", ""),
                 message_id=message_id,
             )
 
@@ -369,7 +402,7 @@ class DiscordJsAdapter(BasePlatformAdapter):
                 user_id=sender_id,
                 user_name=sender_name,
                 chat_type="dm" if is_dm else "channel",
-                channel_name="ForumSession",
+                chat_name="ForumSession",
                 message_id=str(data.get("interaction_id", "")),
             )
 
@@ -412,7 +445,7 @@ class DiscordJsAdapter(BasePlatformAdapter):
                 user_id=sender_id,
                 user_name=sender_name or "user",
                 chat_type="dm" if is_dm else "channel",
-                channel_name=data.get("channel_name", "session"),
+                chat_name=data.get("channel_name", "session"),
                 message_id=str(data.get("message_id", "")),
             )
 
@@ -676,7 +709,7 @@ class DiscordJsAdapter(BasePlatformAdapter):
             user_id=sender_id,
             user_name="Flo",
             chat_type="dm" if is_dm else "channel",
-            channel_name="ForumSession",
+            chat_name="ForumSession",
         )
         if hasattr(self, "_session_store") and self._session_store:
             try:
@@ -749,7 +782,7 @@ class DiscordJsAdapter(BasePlatformAdapter):
             user_id=sender_id,
             user_name="System",
             chat_type="dm" if is_dm else "channel",
-            channel_name="ForumSession",
+            chat_name="ForumSession",
             message_id=message_id,
         )
         try:
@@ -843,7 +876,7 @@ class DiscordJsAdapter(BasePlatformAdapter):
             user_id=sender_id,
             user_name=sender_name,
             chat_type="dm" if is_dm else "channel",
-            channel_name=raw_data.get("channel_name", "ForumSession"),
+            chat_name=raw_data.get("channel_name", "ForumSession"),
             message_id=message_id,
         )
         try:
