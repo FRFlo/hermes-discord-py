@@ -7,7 +7,7 @@ from typing import Any
 
 import discord
 from discord import app_commands
-from views import SessionManagerView
+from ..views import SessionManagerView
 
 logger = logging.getLogger(__name__)
 

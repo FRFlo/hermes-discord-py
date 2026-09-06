@@ -7,7 +7,7 @@ from typing import Any
 
 import discord
 from discord import app_commands
-from views import CronManagerView
+from ..views import CronManagerView
 
 logger = logging.getLogger(__name__)
 

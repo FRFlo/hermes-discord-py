@@ -7,7 +7,7 @@ from typing import Any, List, Optional
 
 import discord
 from discord import app_commands
-from views import AVAILABLE_MODELS, ModelSelectView
+from ..views import AVAILABLE_MODELS, ModelSelectView
 
 logger = logging.getLogger(__name__)
 

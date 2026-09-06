@@ -2,7 +2,7 @@
 Module de rétro-compatibilité réexportant les vues depuis le package views/.
 """
 
-from views import (
+from ..views import (
     AVAILABLE_MODELS,
     ApprovalView,
     CronCreateModal,

@@ -82,10 +82,10 @@ try:
         ToolProgressView,
     )
 except ImportError:
-    from commands import setup_all_commands
-    from downloader import download_and_cache_attachment
-    from events import handle_message_delete, handle_message_edit
-    from services import (
+    from .commands import setup_all_commands
+    from .downloader import download_and_cache_attachment
+    from .events import handle_message_delete, handle_message_edit
+    from ..services import (
         fetch_cron_jobs,
         fetch_forum_threads,
         get_cron_last_output,
@@ -101,7 +101,7 @@ except ImportError:
         save_large_output_to_log_file,
         split_markdown,
     )
-    from views import (
+    from ..views import (
         AVAILABLE_MODELS,
         ApprovalView,
         CronManagerView,

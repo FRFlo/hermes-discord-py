@@ -16,7 +16,7 @@ except ImportError:
         sys.path.insert(0, str(_HERMES_ROOT))
     from gateway.platforms.base import MessageEvent, MessageType
 
-from services.session_service import (
+from ..services.session_service import (
     load_session_transcript,
     resolve_session_id,
     rewrite_session_transcript,
