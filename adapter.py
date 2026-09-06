@@ -839,8 +839,13 @@ class DiscordPyAdapter(BasePlatformAdapter):
     # Cycle de Vie Asynchrone de l'Adaptateur
     # =========================================================================
 
-    async def connect(self) -> bool:
-        """Démarre le bot Discord en tâche de fond asynchrone."""
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
+        """Démarre le bot Discord en tâche de fond asynchrone.
+
+        ``is_reconnect`` is part of the gateway adapter contract.  This
+        adapter does not need different startup behaviour for reconnects,
+        but it must accept the keyword forwarded by the reconnect watcher.
+        """
         if not self._bot_token:
             logger.error("[discord] DISCORD_BOT_TOKEN non configuré. Impossible de connecter le bot.")
             return False
