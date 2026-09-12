@@ -12,6 +12,7 @@ from gateway.platforms.event import MessageType
 from gateway.platforms.base import SUPPORTED_DOCUMENT_TYPES, _TEXT_INJECT_EXTENSIONS
 from gateway.platforms.helpers import convert_table_to_bullets
 from .. import adapter as _adapter
+from .time_format import format_time_expressions
 
 logger = _adapter.logger
 discord = _adapter.discord
@@ -268,10 +269,10 @@ class MessageStateMixin:
         return None
 
     def format_message(self, content: str) -> str:
-        """Format for Discord: GFM tables become bullet lists (Discord doesn't render pipe tables)."""
+        """Format outbound text for Discord, including dates and relative durations."""
         if not content:
             return content
-        return convert_table_to_bullets(content)
+        return format_time_expressions(convert_table_to_bullets(content))
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         """Start a persistent typing loop (POST typing every 12s; indicator lasts ~10s).
         TYPING_START is unreliable for bots in DMs; 429 sleeps ``retry_after``; CancelledError ends it."""
