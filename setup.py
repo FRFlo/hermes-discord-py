@@ -226,12 +226,18 @@ def _apply_yaml_config(yaml_cfg: dict, discord_cfg: dict) -> dict | None:
 def _is_connected(config) -> bool:
     """Connected when DISCORD_BOT_TOKEN is set.
     Looks up ``hermes_cli.gateway.get_env_value`` at call time so tests can patch it (ambient env)."""
-    import hermes_cli.gateway as gateway_mod
-    return bool((gateway_mod.get_env_value("DISCORD_BOT_TOKEN") or "").strip())
+    token = getattr(config, "token", None)
+    if not token:
+        import hermes_cli.gateway as gateway_mod
+        token = gateway_mod.get_env_value("DISCORD_BOT_TOKEN") or ""
+    return bool(str(token).strip())
 
 
 def _build_adapter(config):
     """Factory wrapper that constructs DiscordAdapter from a PlatformConfig."""
+    if not config.token:
+        import hermes_cli.gateway as gateway_mod
+        config.token = gateway_mod.get_env_value("DISCORD_BOT_TOKEN") or None
     return _adapter_module().DiscordAdapter(config)
 
 
