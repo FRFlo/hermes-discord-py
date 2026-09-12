@@ -682,6 +682,15 @@ class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMi
             return preview.text
         return _format_discord_markdown_link(preview.text, preview.url)
 
+    def format_tool_event(self, event: Any, *, mode: str = "all", preview_max_len: int = 40) -> Optional[str]:
+        """Render Hermes tool progress as a Discord function call.
+
+        Hermes still owns mode filtering (``new`` deduplication and ``log``
+        file routing); this adapter owns only Discord presentation.
+        """
+        from .views.tool_trace import format_live_tool_call
+        return format_live_tool_call(event, mode=mode, preview_max_len=preview_max_len)
+
     async def _on_tool_trace_interaction(self, interaction: Any) -> None:
         """Handle persistent trace buttons after a bot restart."""
         custom_id = getattr(getattr(interaction, "data", None), "get", lambda *_: None)("custom_id")
@@ -689,10 +698,10 @@ class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMi
             return
         if getattr(getattr(interaction, "response", None), "is_done", lambda: True)():
             return
-        from .views.tool_trace import get_tool_trace_text
+        from .views.tool_trace import get_tool_trace_text, send_ephemeral_trace
         try:
-            await interaction.response.send_message(
-                get_tool_trace_text(self, custom_id[len("hermes:trace:"):]), ephemeral=True,
+            await send_ephemeral_trace(
+                interaction, get_tool_trace_text(self, custom_id[len("hermes:trace:"):]),
             )
         except Exception:
             logger.debug("Persistent tool trace interaction failed", exc_info=True)
