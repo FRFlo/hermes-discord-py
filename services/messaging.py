@@ -393,6 +393,14 @@ class MessagingMixin:
             channel = await self._resolve_channel(chat_id)
             msg = channel.get_partial_message(int(message_id))
             formatted = self.format_message(content)
+            # Streaming creates the message first and seals it with edit_message().
+            # Attach the actions at that point too; otherwise only the less common
+            # direct-send final path gets the buttons.
+            session_key = metadata.get("_hermes_session_key") if metadata else None
+            final_view = None
+            if finalize and session_key:
+                from ..views.tool_trace import build_tool_trace_view
+                final_view = build_tool_trace_view(discord, self, str(session_key))
             _preview_key = (str(chat_id), str(message_id))
             _saturated_preview = False
             if finalize:
@@ -401,7 +409,9 @@ class MessagingMixin:
             # Pre-flight oversize: final edits split-and-deliver; streaming edits truncate in place.
             if len(formatted) > self.MAX_MESSAGE_LENGTH:
                 if finalize:
-                    return await self._edit_overflow_split(channel, msg, message_id, content)
+                    return await self._edit_overflow_split(
+                        channel, msg, message_id, content, view=final_view,
+                    )
                 formatted = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)[0]
                 _saturated_preview = True
                 # Saturated-preview dedup: past the cap every edit is the same text; skip until finalize.
@@ -413,14 +423,21 @@ class MessagingMixin:
                 # Content shrank under the cap: clear saturation state so dedup can't mask a real edit.
                 self._last_overflow_preview.pop(_preview_key, None)
             try:
-                await msg.edit(content=formatted)
+                if final_view is not None:
+                    await msg.edit(content=formatted, view=final_view)
+                    with suppress(Exception):
+                        self._client.add_view(final_view)
+                else:
+                    await msg.edit(content=formatted)
                 if _saturated_preview:
                     self._last_overflow_preview[_preview_key] = formatted
             except Exception as edit_err:
                 # Reactive split: format_message inflation can exceed 2,000 (50035) even after pre-flight.
                 if self._is_length_overflow_error(edit_err):
                     if finalize:
-                        return await self._edit_overflow_split(channel, msg, message_id, content)
+                        return await self._edit_overflow_split(
+                            channel, msg, message_id, content, view=final_view,
+                        )
                     truncated = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)[0]
                     if self._last_overflow_preview.get(_preview_key) == truncated:
                         # Saturated-preview dedup (see pre-flight path above).
@@ -456,6 +473,7 @@ class MessagingMixin:
 
     async def _edit_overflow_split(
         self, channel: Any, msg: Any, message_id: str, content: str,
+        *, view: Any = None,
     ) -> SendResult:
         """Deliver an oversized final edit: edit ``message_id`` with chunk 1, send chunks 2..N as
         replies to the previous. Returns ``message_id=<last-id>`` + ``continuation_message_ids``.
@@ -477,7 +495,7 @@ class MessagingMixin:
         continuation_ids: list[str] = []
         delivered = 1
         prev_msg = msg
-        for chunk in chunks[1:]:
+        for index, chunk in enumerate(chunks[1:], start=1):
             reference = None
             if hasattr(prev_msg, "to_reference"):
                 try:
@@ -488,7 +506,10 @@ class MessagingMixin:
                 # Prior message without to_reference (duck-typed): build the reference from ids.
                 reference = self._message_reference_from_ids(prev_msg.id, channel)
             try:
-                sent = await channel.send(content=chunk, reference=reference)
+                send_kwargs = {"content": chunk, "reference": reference}
+                if view is not None and index == len(chunks) - 1:
+                    send_kwargs["view"] = view
+                sent = await channel.send(**send_kwargs)
             except Exception as send_err:
                 # Drop the reply anchor and retry once: deleted anchor (10008) / system message (50035).
                 logger.warning(
@@ -496,7 +517,10 @@ class MessagingMixin:
                     self.name, send_err,
                 )
                 try:
-                    sent = await channel.send(content=chunk, reference=None)
+                    retry_kwargs = {"content": chunk, "reference": None}
+                    if view is not None and index == len(chunks) - 1:
+                        retry_kwargs["view"] = view
+                    sent = await channel.send(**retry_kwargs)
                 except Exception as retry_err:
                     logger.warning(
                         "[%s] Overflow split: stopped at %d/%d chunks delivered: %s",
