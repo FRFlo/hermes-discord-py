@@ -56,7 +56,17 @@ class EventNormalizationMixin:
 
     async def _emit_platform_event(self, event_type: str, build) -> None:
         """Normalize one event via ``build()`` -> ``(payload, source_kwargs)`` (None drops) and dispatch."""
-        if not self._platform_events_subscribed() and not getattr(self, "_platform_event_sync_enabled", False):
+        # A gateway callback is also the synchronization path for edits/deletes.
+        # Do not gate those mutations on the optional observer hook: older gateway
+        # versions install the callback without setting the sync flag or registering
+        # the hook, which otherwise makes Discord mutations disappear silently.
+        if getattr(self, "_platform_event_handler", None) is None:
+            return
+        if (
+            event_type not in {"message_edited", "message_deleted"}
+            and not self._platform_events_subscribed()
+            and not getattr(self, "_platform_event_sync_enabled", False)
+        ):
             return
         try:
             built = build()
