@@ -1,5 +1,3 @@
-import json
-
 import asyncio
 
 from views.tool_trace import (
@@ -15,9 +13,7 @@ from views.tool_trace import (
 def test_format_tool_call_uses_code_call_shape():
     rendered = _format_tool_call("read_file", {"path": "README.md"})
 
-    assert rendered.startswith("\n⚙️ `read_file`(\n```json")
-    assert json.dumps({"path": "README.md"}, ensure_ascii=False, indent=2) in rendered
-    assert rendered.endswith("\n```\n)")
+    assert rendered == '\n⚙️ `read_file(path="README.md")`'
 
 
 def test_format_tool_call_empty_arguments_is_compact():
@@ -61,7 +57,7 @@ def test_trace_renders_call_and_result_together():
         {"role": "tool", "content": "12 lines"},
     ])
 
-    assert "⚙️ `read_file`(" in rendered
+    assert "⚙️ `read_file(path=" in rendered
     assert "↳ **Result**" in rendered
     assert "12 lines" in rendered
 
