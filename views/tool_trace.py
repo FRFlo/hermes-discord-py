@@ -131,11 +131,19 @@ def _format_tool_result(result: str) -> str:
 
 
 def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -> Any:
-    """Build a persistent-in-process button whose reply is Discord-ephemeral."""
+    """Build the persistent actions attached to a completed assistant response.
+
+    The regenerate action deliberately goes through the existing ``/retry`` command
+    instead of replaying the transcript here.  That keeps the gateway's retry
+    semantics (including the original user prompt and session context) in one place.
+    """
     class ToolTraceView(discord_module.ui.View):
         def __init__(self) -> None:
             super().__init__(timeout=None)
             self.add_item(self.ShowTraceButton())
+            self.add_item(self.RegenerateButton())
+            self.add_item(self.ContinueButton())
+            self.add_item(self.DeleteButton())
 
         class ShowTraceButton(discord_module.ui.Button):
             def __init__(self) -> None:
@@ -151,6 +159,59 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
                     if not interaction.response.is_done():
                         await interaction.response.send_message(
                             "Le détail de cette réponse n’est plus disponible.", ephemeral=True)
+
+        class RegenerateButton(discord_module.ui.Button):
+            def __init__(self) -> None:
+                super().__init__(label="Tout régénérer", style=discord_module.ButtonStyle.primary,
+                                 custom_id=f"hermes:regenerate:{session_key}")
+
+            async def callback(self, interaction: Any) -> None:
+                # _run_simple_slash performs the normal authorization gate and
+                # defers the interaction before starting the potentially long turn.
+                try:
+                    await adapter._run_simple_slash(
+                        interaction, "/retry", "Régénération en cours~",
+                    )
+                except Exception:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(
+                            "La régénération a échoué. Vous pouvez réessayer.", ephemeral=True)
+
+        class ContinueButton(discord_module.ui.Button):
+            def __init__(self) -> None:
+                super().__init__(label="Continuer", style=discord_module.ButtonStyle.secondary,
+                                 custom_id=f"hermes:continue:{session_key}")
+
+            async def callback(self, interaction: Any) -> None:
+                # A normal text event keeps the current session and transcript,
+                # so the agent receives the same context as a typed follow-up.
+                try:
+                    await adapter._run_simple_slash(
+                        interaction, "Continue.", "Je continue~",
+                    )
+                except Exception:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(
+                            "Impossible de continuer cette réponse.", ephemeral=True)
+
+        class DeleteButton(discord_module.ui.Button):
+            def __init__(self) -> None:
+                super().__init__(label="Supprimer", style=discord_module.ButtonStyle.danger,
+                                 custom_id=f"hermes:delete:{session_key}")
+
+            async def callback(self, interaction: Any) -> None:
+                try:
+                    if not await adapter._check_slash_authorization(interaction, "/delete"):
+                        return
+                    await interaction.response.defer(ephemeral=True)
+                    message = getattr(interaction, "message", None)
+                    if message is not None and hasattr(message, "delete"):
+                        await message.delete()
+                    await interaction.followup.send("Réponse supprimée.", ephemeral=True)
+                except Exception:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(
+                            "Impossible de supprimer cette réponse.", ephemeral=True)
 
     return ToolTraceView()
 
