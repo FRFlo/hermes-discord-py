@@ -132,7 +132,7 @@ _YAML_WEBSOCKET_LIVENESS_KEYS = (
 
 
 def _apply_yaml_config(yaml_cfg: dict, discord_cfg: dict) -> dict | None:
-    """Translate ``config.yaml`` ``discord:`` keys into env vars (``apply_yaml_config_fn``).
+    """Translate ``config.yaml`` ``discord-frflo:`` keys into env vars (``apply_yaml_config_fn``).
     The adapter reads ``DISCORD_*`` via ``os.getenv()`` at ~50 sites, so this hook owns YAML→env;
     ``extra`` stays the per-adapter truth for liveness (multiplex isolation). Returns liveness settings.
 
@@ -154,7 +154,7 @@ def _apply_yaml_config(yaml_cfg: dict, discord_cfg: dict) -> dict | None:
     platforms_cfg = yaml_cfg.get("platforms")
     platform_extra_cfg = {}
     if isinstance(platforms_cfg, dict):
-        discord_platform_cfg = platforms_cfg.get("discord")
+        discord_platform_cfg = platforms_cfg.get("discord-frflo")
         if isinstance(discord_platform_cfg, dict):
             candidate_extra = discord_platform_cfg.get("extra")
             if isinstance(candidate_extra, dict):
@@ -238,8 +238,8 @@ def _build_adapter(config):
 def register(ctx) -> None:
     """Plugin entry point — called by the Hermes plugin system."""
     ctx.register_platform(
-        name="discord",
-        label="Discord",
+        name="discord-frflo",
+        label="Discord (FRFlo)",
         adapter_factory=_build_adapter,
         check_fn=_discord_deps_present,
         ensure_deps_fn=_check_discord_requirements,
@@ -247,8 +247,8 @@ def register(ctx) -> None:
         required_env=["DISCORD_BOT_TOKEN"],
         install_hint="Run `hermes setup` to install Discord support.",
         setup_fn=interactive_setup,
-        # YAML→env bridge: ``discord:`` config keys → ``DISCORD_*`` env vars read via os.getenv().
-        # YAML→env config bridge — owns the translation of ``config.yaml`` ``discord:`` keys
+        # YAML→env bridge: ``discord-frflo:`` config keys → ``DISCORD_*`` env vars read via os.getenv().
+        # YAML→env config bridge — owns the translation of ``config.yaml`` ``discord-frflo:`` keys
         # (require_mention, free_response_channels, auto_thread, reactions, ignored_channels,
         # allowed_channels, no_thread_channels, allow_mentions.*, reply_to_mode, thread_require_mention)
         # into ``DISCORD_*`` env vars that the adapter reads via ``os.getenv()``. Replaces the hardcoded

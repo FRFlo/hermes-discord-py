@@ -46,12 +46,12 @@ Never commit the token or place it in `config.yaml`.
 
 ## Configuration
 
-Discord settings can be configured under `discord` in
+Discord settings can be configured under `discord-frflo` in
 `~/.hermes/config.yaml`. Environment variables remain supported for backwards
 compatibility and secrets.
 
 ```yaml
-discord:
+discord-frflo:
   require_mention: true
   thread_require_mention: false
   allow_from:
