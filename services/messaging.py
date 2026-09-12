@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import traceback
+from contextlib import suppress
 from typing import Any, Dict, List, Optional
 
 from gateway.platforms.base import SendResult
@@ -164,11 +165,17 @@ class MessagingMixin:
                     chunk_reference = reference if i == 0 else None
                 try:
                     send_kwargs = {"content": chunk, "reference": chunk_reference}
+                    # Only the last final message gets the on-demand trace button.  The
+                    # trace itself is loaded lazily from the existing session store.
+                    session_key = metadata.get("_hermes_session_key") if metadata else None
+                    if final_delivery and i == len(chunks) - 1 and session_key:
+                        from ..views.tool_trace import build_tool_trace_view
+                        send_kwargs["view"] = build_tool_trace_view(discord, self, str(session_key))
                     # Static messages use V2 when available.  Streaming edits, voice notes,
                     # and oversized payloads remain on the legacy path below.
                     from ..views.components_v2 import build_text_view
                     v2_view = build_text_view(discord, chunk) if len(chunk) <= 4000 else None
-                    if v2_view is not None:
+                    if v2_view is not None and "view" not in send_kwargs:
                         send_kwargs = {"view": v2_view, "reference": chunk_reference}
                     try:
                         msg = await channel.send(**send_kwargs)
@@ -188,11 +195,15 @@ class MessagingMixin:
                     else:
                         raise
                 message_ids.append(str(msg.id))
+                if final_delivery and i == len(chunks) - 1 and session_key:
+                    with suppress(Exception):
+                        self._client.add_view(send_kwargs["view"])
             # Track the last sent message for history backfill (skips the full history scan).
             if message_ids:
                 _target_id = thread_id or chat_id
                 if nonconversational:
                     await self._nonconversational_messages.mark_many(message_ids)
+                    self._temporary_progress_ids.setdefault(str(_target_id), set()).update(message_ids)
                 elif not _looks_like_nonconversational_history_message(content):
                     self._last_self_message_id[_target_id] = message_ids[-1]
                 session_key = metadata.get("_hermes_session_key") if metadata else None
@@ -210,6 +221,13 @@ class MessagingMixin:
                             db.record_discord_response_message_ids,
                             entry.session_id, str(inbound_id), message_ids,
                         )
+                # Tool-progress messages are deliberately transient on Discord.  Delete
+                # them only after a successful final response, leaving failed turns useful.
+                if final_delivery:
+                    transient = getattr(self, "_temporary_progress_ids", {}).pop(str(_target_id), set())
+                    for transient_id in transient:
+                        if transient_id not in message_ids:
+                            await self.delete_message(str(_target_id), transient_id)
             # Connection-shaped failure (WS drop / closed session): use the ledger's runtime-retryable
             # marker so the reconnect sweep can replay this final response instead of stranding it until a
             # process restart (#95382 silent partial loss).

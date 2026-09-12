@@ -94,6 +94,8 @@ class InitializationMixin:
         self._slash_commands: bool = self.config.extra.get("slash_commands", True)
         # Bot's last message ID per channel: lets history backfill skip the full channel.history() scan.
         self._last_self_message_id: Dict[str, str] = {}
+        # Progress bubbles are retained until the final response succeeds, then removed.
+        self._temporary_progress_ids: Dict[str, set[str]] = {}
         # Bot-authored lifecycle/status message IDs that must not bound history after restart.
         self._nonconversational_messages = _new_nonconversational_tracker()
         # Last truncated mid-stream preview per (chat_id, message_id): past the 2000 cap every edit

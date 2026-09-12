@@ -402,6 +402,7 @@ class LifecycleMixin:
                 thread_create, thread_update, voice_state_update,
             ):
                 event_module.register(self._client, self)
+            self._client.add_listener(self._on_tool_trace_interaction, "on_interaction")
             if self._slash_commands:
                 self._register_slash_commands()
             self._disconnecting = False

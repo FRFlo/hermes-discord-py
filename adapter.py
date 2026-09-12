@@ -682,6 +682,21 @@ class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMi
             return preview.text
         return _format_discord_markdown_link(preview.text, preview.url)
 
+    async def _on_tool_trace_interaction(self, interaction: Any) -> None:
+        """Handle persistent trace buttons after a bot restart."""
+        custom_id = getattr(getattr(interaction, "data", None), "get", lambda *_: None)("custom_id")
+        if not isinstance(custom_id, str) or not custom_id.startswith("hermes:trace:"):
+            return
+        if getattr(getattr(interaction, "response", None), "is_done", lambda: True)():
+            return
+        from .views.tool_trace import get_tool_trace_text
+        try:
+            await interaction.response.send_message(
+                get_tool_trace_text(self, custom_id[len("hermes:trace:"):]), ephemeral=True,
+            )
+        except Exception:
+            logger.debug("Persistent tool trace interaction failed", exc_info=True)
+
 
 
     async def _on_discord_ready(self) -> None:
