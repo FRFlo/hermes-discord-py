@@ -3,12 +3,13 @@ label: Discord
 kind: platform
 version: 1.0.0
 description: >
-  Discord gateway adapter for Hermes Agent.
-  Connects to Discord via the discord.py library and relays messages
-  between Discord guilds/DMs and the Hermes agent. Supports voice mode,
-  slash commands, free-response channels, role-based DM auth, threads,
-  reactions, and channel skill bindings.
-author: NousResearch
+  Independent, opinionated Discord gateway adapter for Hermes Agent,
+  maintained by FRFlo. This plugin provides an alternative Discord layer
+  rather than replacing or mirroring Hermes' built-in implementation. It
+  connects to Discord via discord.py and supports voice mode, slash
+  commands, free-response channels, role-based DM auth, threads, reactions,
+  and channel skill bindings.
+author: FRFlo
 requires_env:
   - name: DISCORD_BOT_TOKEN
     description: "Discord bot token"
