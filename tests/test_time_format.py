@@ -27,3 +27,12 @@ def test_invalid_dates_are_unchanged():
 
 def test_preserves_common_day_words():
     assert format_time_expressions("demain / yesterday", now=NOW) == "demain / yesterday"
+
+
+def test_preserves_memory_error_with_extreme_relative_value():
+    message = (
+        "Replacement would put memory at 2,428/2,200 chars; "
+        "current_entries: 999999999999999999999999999 days"
+    )
+
+    assert format_time_expressions(message, now=NOW) == message
