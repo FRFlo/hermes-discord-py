@@ -216,7 +216,6 @@ from .services.state import MessageStateMixin
 from .services.channel_context import ChannelContextMixin
 from .services.config_runtime import RuntimeConfigMixin
 from .services.initialization import InitializationMixin
-from .events.normalization import EventNormalizationMixin
 from .services.voice import VoiceLifecycleMixin
 from .services.standalone import _standalone_send
 from gateway.platforms.event import MessageEvent, MessageType, ProcessingOutcome
@@ -657,7 +656,7 @@ def _read_discord_prompt_timeout() -> int:
 from plugins.platforms.discord.adapter_media import DiscordMediaMixin
 
 
-class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMixin, ThreadLifecycleMixin, RecoveryMixin, VoiceLifecycleMixin, LifecycleMixin, CommandSyncMixin, MessagingMixin, GatesMixin, IngressMixin, InteractionsMixin, MessageStateMixin, ChannelContextMixin, RuntimeConfigMixin, EventNormalizationMixin, DiscordMediaMixin, BasePlatformAdapter):
+class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMixin, ThreadLifecycleMixin, RecoveryMixin, VoiceLifecycleMixin, LifecycleMixin, CommandSyncMixin, MessagingMixin, GatesMixin, IngressMixin, InteractionsMixin, MessageStateMixin, ChannelContextMixin, RuntimeConfigMixin, DiscordMediaMixin, BasePlatformAdapter):
     """Discord bot adapter: guild/DM messages, threads, slash commands, button approvals, reactions."""
 
     MAX_MESSAGE_LENGTH = 2000
@@ -773,36 +772,6 @@ class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMi
                 if "*" not in free_channels and not (channel_keys & free_channels):
                     return False, False
         return True, role_authorized
-
-    async def _dispatch_discord_message(self, message: Any) -> bool:
-        """Compatibility entrypoint; ingress orchestration lives in ``events.message_create``."""
-        from .events.message_create import handle
-        return await handle(message, self)
-
-    # --- gateway_platform_event fire-sites ---
-
-    async def _on_platform_message_edit(self, before, after) -> None:
-        """Compatibility entrypoint; normalization lives in ``events.message_edit``."""
-        from .events.message_edit import handle
-        await handle(before, after, self)
-
-    async def _on_platform_message_delete(self, message) -> None:
-        """Compatibility entrypoint; normalization lives in ``events.message_delete``."""
-        from .events.message_delete import handle
-        await handle(message, self)
-
-    async def _on_platform_thread_create(self, thread) -> None:
-        """Compatibility entrypoint; normalization lives in ``events.thread_create``."""
-        from .events.thread_create import handle
-        await handle(thread, self)
-
-    async def _on_platform_thread_update(self, before, after) -> None:
-        """Compatibility entrypoint; normalization lives in ``events.thread_update``."""
-        from .events.thread_update import handle
-        await handle(before, after, self)
-
-
-
 
     # Attachment download helpers
     # Prefer the authenticated bot session (``att.read()``): CDN URLs increasingly 403 without

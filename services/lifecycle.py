@@ -393,16 +393,8 @@ class LifecycleMixin:
                 allowed_mentions=_build_allowed_mentions(getattr(self.config, "extra", None)),
                 **proxy_kwargs_for_bot(proxy_url),
             )
-            from ..events import (
-                message_create, message_delete, message_edit, ready,
-                thread_create, thread_update, voice_state_update,
-            )
-            for event_module in (
-                ready, message_create, message_edit, message_delete,
-                thread_create, thread_update, voice_state_update,
-            ):
-                event_module.register(self._client, self)
-            self._client.add_listener(self._on_tool_trace_interaction, "on_interaction")
+            from ..events import register_events
+            await register_events(self._client, self)
             if self._slash_commands:
                 self._register_slash_commands()
             self._disconnecting = False

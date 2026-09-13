@@ -1,21 +1,51 @@
-"""Discord ``on_thread_create`` event."""
+"""Discord thread creation listener."""
+
+import logging
+
+from discord.ext import commands
+
+logger = logging.getLogger("plugins.platforms.discord.adapter")
 
 
-async def handle(thread, adapter) -> None:
-    """Normalize a newly created thread into the platform-event boundary."""
-    def extra(value, owner_id):
-        name = getattr(value, "name", None)
-        return {
-            "name": name[:256] if isinstance(name, str) else None,
-            "owner_id": str(owner_id)[:128] if owner_id is not None else None,
+class ThreadCreateEvent(commands.Cog):
+    def __init__(self, adapter) -> None:
+        self.adapter = adapter
+
+    @commands.Cog.listener()
+    async def on_thread_create(self, thread) -> None:
+        adapter = self.adapter
+        thread_id = getattr(thread, "id", None)
+        owner_id = getattr(thread, "owner_id", None)
+        if thread_id is None or owner_id is None:
+            return
+        identity = adapter._platform_message_identities.get(str(thread_id))
+        if identity is not None:
+            identity["chat_id"] = str(thread_id)
+            identity["chat_type"] = "thread"
+            identity["thread_id"] = str(thread_id)
+
+        parent_id = getattr(thread, "parent_id", None)
+        guild = getattr(thread, "guild", None)
+        thread_name = getattr(thread, "name", None)
+        event = {
+            "platform": "discord",
+            "event_type": "thread_created",
+            "payload": {
+                "thread_id": str(thread_id)[:128],
+                "parent_chat_id": str(parent_id)[:128] if parent_id is not None else None,
+                "name": thread_name[:256] if isinstance(thread_name, str) else None,
+                "owner_id": str(owner_id)[:128],
+            },
         }
-
-    await adapter._emit_platform_event(
-        "thread_created", lambda: adapter._thread_event_parts(thread, extra),
-    )
-
-
-def register(client, adapter) -> None:
-    @client.event
-    async def on_thread_create(thread):
-        await handle(thread, adapter)
+        source = adapter.build_source(
+            chat_id=str(thread_id), chat_type="thread", user_id=str(owner_id),
+            user_name=None, thread_id=str(thread_id),
+            guild_id=str(getattr(guild, "id", "")) if guild else None,
+        )
+        handler = getattr(adapter, "_platform_event_handler", None)
+        if handler is None:
+            return
+        try:
+            await handler(event, source)
+        except Exception:
+            logger.debug("[%s] thread create dispatch error", adapter.name, exc_info=True)
