@@ -99,6 +99,10 @@ class InitializationMixin:
         self._last_self_message_id: Dict[str, str] = {}
         # Progress bubbles are retained until the final response succeeds, then removed.
         self._temporary_progress_ids: Dict[str, set[str]] = {}
+        # Hermes does not currently include its session key in StreamConsumer edit
+        # metadata.  Keep the key alongside the inbound and preview message IDs so
+        # final edits can still attach the response action buttons.
+        self._hermes_session_keys_by_message_id: Dict[str, str] = {}
         # Bot-authored lifecycle/status message IDs that must not bound history after restart.
         self._nonconversational_messages = _new_nonconversational_tracker()
         # Last truncated mid-stream preview per (chat_id, message_id): past the 2000 cap every edit

@@ -10,6 +10,34 @@ from views.tool_trace import (
 )
 
 
+def test_final_action_view_contains_all_response_buttons():
+    from views.tool_trace import build_tool_trace_view
+
+    class Button:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class View:
+        def __init__(self, **_kwargs):
+            self.children = []
+
+        def add_item(self, item):
+            self.children.append(item)
+
+    discord = type("Discord", (), {
+        "ui": type("UI", (), {"View": View, "Button": Button}),
+        "ButtonStyle": type("Styles", (), {
+            "secondary": "secondary", "primary": "primary", "danger": "danger",
+        }),
+    })
+
+    view = build_tool_trace_view(discord, object(), "agent:discord:dm:42")
+
+    assert [button.label for button in view.children] == [
+        "Afficher le raisonnement", "Tout régénérer", "Continuer", "Supprimer",
+    ]
+
+
 def test_format_tool_call_uses_code_call_shape():
     rendered = _format_tool_call("read_file", {"path": "README.md"})
 

@@ -664,6 +664,10 @@ class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMi
     """Discord bot adapter: guild/DM messages, threads, slash commands, button approvals, reactions."""
 
     MAX_MESSAGE_LENGTH = 2000
+    # The final edit is not merely cosmetic: it attaches the response action
+    # buttons.  Without this flag StreamConsumer may skip finalize=True when
+    # the last streamed text already equals the completed response.
+    REQUIRES_EDIT_FINALIZE = True
     _SPLIT_THRESHOLD = 1900  # near the 2000-char split point
     supports_code_blocks = True  # Discord markdown renders fenced code blocks natively
     splits_long_messages = True  # send() chunks via truncate_message(MAX_MESSAGE_LENGTH)

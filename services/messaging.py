@@ -24,6 +24,38 @@ _derive_forum_thread_name = lambda value: _adapter._derive_forum_thread_name(val
 class MessagingMixin:
     """Own outbound Discord message and reaction behavior."""
 
+    _RESPONSE_SESSION_KEY_CACHE_LIMIT = 4096
+
+    def _remember_response_session_key(self, message_id: Any, session_key: Any) -> None:
+        """Associate an inbound/outbound Discord message with its Hermes session."""
+        message_key = str(message_id or "").strip()
+        session_value = str(session_key or "").strip()
+        if not message_key or not session_value:
+            return
+        cache = getattr(self, "_hermes_session_keys_by_message_id", None)
+        if cache is None:
+            cache = self._hermes_session_keys_by_message_id = {}
+        cache.pop(message_key, None)
+        cache[message_key] = session_value
+        while len(cache) > self._RESPONSE_SESSION_KEY_CACHE_LIMIT:
+            cache.pop(next(iter(cache)))
+
+    def _response_session_key(
+        self, metadata: Optional[Dict[str, Any]], *message_ids: Any,
+    ) -> Optional[str]:
+        """Resolve the current session from explicit metadata or cached message IDs."""
+        if metadata:
+            explicit = str(metadata.get("_hermes_session_key") or "").strip()
+            if explicit:
+                return explicit
+            message_ids = (*message_ids, metadata.get("reply_to_message_id"))
+        cache = getattr(self, "_hermes_session_keys_by_message_id", {})
+        for message_id in message_ids:
+            key = str(message_id or "").strip()
+            if key and key in cache:
+                return cache[key]
+        return None
+
     def _configured_system_channel_id(
         self, content: str, metadata: Optional[Dict[str, Any]],
     ) -> Optional[str]:
@@ -183,6 +215,7 @@ class MessagingMixin:
             )
             message_ids = []
             reference = self._reply_reference_for_send(reply_to, channel)
+            session_key = self._response_session_key(metadata, reply_to)
             for i, chunk in enumerate(chunks):
                 if self._reply_to_mode == "all":
                     chunk_reference = reference
@@ -192,7 +225,6 @@ class MessagingMixin:
                     send_kwargs = {"content": chunk, "reference": chunk_reference}
                     # Only the last final message gets the on-demand trace button.  The
                     # trace itself is loaded lazily from the existing session store.
-                    session_key = metadata.get("_hermes_session_key") if metadata else None
                     if final_delivery and i == len(chunks) - 1 and session_key:
                         from ..views.tool_trace import build_tool_trace_view
                         send_kwargs["view"] = build_tool_trace_view(discord, self, str(session_key))
@@ -204,10 +236,14 @@ class MessagingMixin:
                             self.name, reply_to,
                         )
                         reference = None
-                        msg = await channel.send(content=chunk, reference=None)
+                        retry_kwargs = dict(send_kwargs)
+                        retry_kwargs["reference"] = None
+                        msg = await channel.send(**retry_kwargs)
                     else:
                         raise
                 message_ids.append(str(msg.id))
+                if session_key:
+                    self._remember_response_session_key(msg.id, session_key)
                 if final_delivery and i == len(chunks) - 1 and session_key:
                     with suppress(Exception):
                         self._client.add_view(send_kwargs["view"])
@@ -219,7 +255,6 @@ class MessagingMixin:
                     self._temporary_progress_ids.setdefault(str(_target_id), set()).update(message_ids)
                 elif not _looks_like_nonconversational_history_message(content):
                     self._last_self_message_id[_target_id] = message_ids[-1]
-                session_key = metadata.get("_hermes_session_key") if metadata else None
                 inbound_id = metadata.get("_hermes_inbound_message_id") if metadata else None
                 if session_key and inbound_id:
                     tracked = getattr(self, "_hermes_response_message_ids", None)
@@ -386,7 +421,7 @@ class MessagingMixin:
             # Streaming creates the message first and seals it with edit_message().
             # Attach the actions at that point too; otherwise only the less common
             # direct-send final path gets the buttons.
-            session_key = metadata.get("_hermes_session_key") if metadata else None
+            session_key = self._response_session_key(metadata, message_id)
             final_view = None
             if finalize and session_key:
                 from ..views.tool_trace import build_tool_trace_view

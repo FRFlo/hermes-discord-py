@@ -166,6 +166,18 @@ class IngressMixin:
                 or self._derive_auto_thread_name(message.content or "")
             ) if auto_threaded_channel is not None else None,
         )
+        # StreamConsumer forwards routing metadata to edit_message(), but not the
+        # canonical Hermes session key.  Cache it under the triggering Discord
+        # message ID; send() will transfer it to the editable preview message ID.
+        runner = getattr(self, "gateway_runner", None)
+        session_key_for_source = getattr(runner, "_session_key_for_source", None)
+        if callable(session_key_for_source):
+            try:
+                self._remember_response_session_key(
+                    str(message.id), session_key_for_source(source),
+                )
+            except Exception:
+                logger.debug("[%s] Could not cache response session key", self.name, exc_info=True)
         media_urls, media_types, pending_text_injection = await self._collect_attachment_media(all_attachments)
         event_text = normalized_content
         if pending_text_injection:
