@@ -137,6 +137,37 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
     instead of replaying the transcript here.  That keeps the gateway's retry
     semantics (including the original user prompt and session context) in one place.
     """
+    class ConfirmationView(discord_module.ui.View):
+        """Ephemeral confirmation prompt for destructive/expensive actions."""
+
+        def __init__(self, action: Any, *, confirm_label: str) -> None:
+            super().__init__(timeout=60)
+            self._action = action
+            self.add_item(self.ConfirmButton(confirm_label))
+            self.add_item(self.CancelButton())
+
+        class ConfirmButton(discord_module.ui.Button):
+            def __init__(self, label: str) -> None:
+                super().__init__(label=label, style=discord_module.ButtonStyle.danger,
+                                 custom_id=f"hermes:confirm:{session_key}")
+
+            async def callback(self, interaction: Any) -> None:
+                try:
+                    await self.view._action(interaction)
+                except Exception:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(
+                            "L’action a échoué. Vous pouvez réessayer.", ephemeral=True)
+
+        class CancelButton(discord_module.ui.Button):
+            def __init__(self) -> None:
+                super().__init__(label="Annuler", style=discord_module.ButtonStyle.secondary,
+                                 custom_id=f"hermes:cancel:{session_key}")
+
+            async def callback(self, interaction: Any) -> None:
+                await interaction.response.edit_message(
+                    content="Action annulée.", view=None)
+
     class ToolTraceView(discord_module.ui.View):
         def __init__(self) -> None:
             super().__init__(timeout=None)
@@ -166,11 +197,21 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
                                  custom_id=f"hermes:regenerate:{session_key}")
 
             async def callback(self, interaction: Any) -> None:
-                # _run_simple_slash performs the normal authorization gate and
-                # defers the interaction before starting the potentially long turn.
                 try:
-                    await adapter._run_simple_slash(
-                        interaction, "/retry", "Régénération en cours~",
+                    if not await adapter._check_slash_authorization(interaction, "/retry"):
+                        return
+
+                    async def regenerate(confirmed_interaction: Any) -> None:
+                        # _run_simple_slash performs the normal authorization gate and
+                        # defers the interaction before starting the potentially long turn.
+                        await adapter._run_simple_slash(
+                            confirmed_interaction, "/retry", "Régénération en cours~",
+                        )
+
+                    await interaction.response.send_message(
+                        "Voulez-vous vraiment régénérer toute la réponse ?",
+                        ephemeral=True,
+                        view=ConfirmationView(regenerate, confirm_label="Régénérer"),
                     )
                 except Exception:
                     if not interaction.response.is_done():
@@ -203,11 +244,21 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
                 try:
                     if not await adapter._check_slash_authorization(interaction, "/delete"):
                         return
-                    await interaction.response.defer(ephemeral=True)
-                    message = getattr(interaction, "message", None)
-                    if message is not None and hasattr(message, "delete"):
-                        await message.delete()
-                    await interaction.followup.send("Réponse supprimée.", ephemeral=True)
+
+                    target_message = getattr(interaction, "message", None)
+
+                    async def delete(confirmed_interaction: Any) -> None:
+                        await confirmed_interaction.response.defer(ephemeral=True)
+                        if target_message is not None and hasattr(target_message, "delete"):
+                            await target_message.delete()
+                        await confirmed_interaction.followup.send(
+                            "Réponse supprimée.", ephemeral=True)
+
+                    await interaction.response.send_message(
+                        "Voulez-vous vraiment supprimer cette réponse ?",
+                        ephemeral=True,
+                        view=ConfirmationView(delete, confirm_label="Supprimer"),
+                    )
                 except Exception:
                     if not interaction.response.is_done():
                         await interaction.response.send_message(
