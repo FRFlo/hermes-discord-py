@@ -24,6 +24,29 @@ _derive_forum_thread_name = lambda value: _adapter._derive_forum_thread_name(val
 class MessagingMixin:
     """Own outbound Discord message and reaction behavior."""
 
+    def _configured_system_channel_id(
+        self, content: str, metadata: Optional[Dict[str, Any]],
+    ) -> Optional[str]:
+        """Return the configured channel selector for system messages.
+
+        The selector has the same shape as ``platforms.*.home_channel``.  Its
+        ``chat_id`` can point to an existing forum thread, keeping lifecycle/status
+        notifications together without creating a new forum post.
+        """
+        if not (
+            _metadata_marks_nonconversational(metadata)
+            or _looks_like_nonconversational_history_message(content)
+        ):
+            return None
+        extra = getattr(self.config, "extra", None)
+        selector = extra.get("system_channel") if isinstance(extra, dict) else None
+        if isinstance(selector, dict):
+            channel_id = selector.get("chat_id")
+        else:
+            channel_id = None
+        text = str(channel_id or "").strip()
+        return text or None
+
     async def _add_reaction(self, message: Any, emoji: str) -> bool:
         """Add an emoji reaction to a Discord message."""
         if not message or not hasattr(message, "add_reaction"):
@@ -138,6 +161,8 @@ class MessagingMixin:
             thread_id = None
             if metadata and metadata.get("thread_id"):
                 thread_id = metadata["thread_id"]
+            if not thread_id:
+                thread_id = self._configured_system_channel_id(content, metadata)
             nonconversational = _metadata_marks_nonconversational(metadata)
             final_delivery = bool(metadata and metadata.get("notify"))
             if thread_id:

@@ -206,6 +206,17 @@ def _apply_yaml_config(yaml_cfg: dict, discord_cfg: dict) -> dict | None:
                 _env_default(f"DISCORD_ALLOW_MENTION_{yaml_key.upper()}", str(allow_mentions_cfg[yaml_key]).lower())
     # reply_to_mode: top-level preferred, falls back to extra; YAML 1.1 parses bare 'off' as False.
     _discord_extra = discord_cfg.get("extra") if isinstance(discord_cfg.get("extra"), dict) else {}
+    # Optional channel selector for lifecycle/status messages.  It mirrors
+    # platforms.discord-frflo.home_channel and is kept in adapter extra so the
+    # send path can route non-conversational messages to its chat_id.
+    _platform_system_channel = None
+    if isinstance(platforms_cfg, dict):
+        _discord_platform_cfg = platforms_cfg.get("discord-frflo")
+        if isinstance(_discord_platform_cfg, dict):
+            _platform_system_channel = _discord_platform_cfg.get("system_channel")
+    _system_channel = discord_cfg.get("system_channel", _platform_system_channel)
+    if isinstance(_system_channel, dict) and _system_channel.get("chat_id") is not None:
+        seeded_extra["system_channel"] = dict(_system_channel)
     _discord_rtm = discord_cfg["reply_to_mode"] if "reply_to_mode" in discord_cfg else _discord_extra.get("reply_to_mode")
     if _discord_rtm is not None:
         _env_default("DISCORD_REPLY_TO_MODE", "off" if _discord_rtm is False else str(_discord_rtm).lower())

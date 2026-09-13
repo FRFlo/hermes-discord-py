@@ -130,6 +130,10 @@ _DISCORD_NONCONVERSATIONAL_HISTORY_MESSAGE_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"^\s*♻️?\s+Gateway\s+(?:restarted successfully|online\b)[\s\S]*$", re.IGNORECASE),
+    re.compile(
+        r"^\s*⚠️\s+Gateway\s+shutting\s+down\b[\s\S]*$",
+        re.IGNORECASE,
+    ),
 )
 try:
     import discord

@@ -27,6 +27,17 @@ def _remember_channel_is_forum(chat_id: str, is_forum: bool) -> None:
     _adapter._remember_channel_is_forum(chat_id, is_forum)
 
 
+def _configured_system_channel_id(pconfig: Any, message: str) -> Optional[str]:
+    """Resolve the dedicated system destination for legacy content-only sends."""
+    if not _adapter._looks_like_nonconversational_history_message(message):
+        return None
+    extra = getattr(pconfig, "extra", None)
+    selector = extra.get("system_channel") if isinstance(extra, dict) else None
+    channel_id = selector.get("chat_id") if isinstance(selector, dict) else None
+    text = str(channel_id or "").strip()
+    return text or None
+
+
 def _standalone_sanitize_error(text) -> str:
     """Local copy of tools.send_message_tool._sanitize_error_text (strips bot tokens); avoids hard dep."""
     s = str(text)
@@ -163,6 +174,9 @@ async def _standalone_send(
         token = (get_secret("DISCORD_BOT_TOKEN", "") or "").strip()
     if not token:
         return {"error": "Discord standalone send: DISCORD_BOT_TOKEN is not set"}
+    system_channel_id = _configured_system_channel_id(pconfig, message)
+    if system_channel_id and not thread_id:
+        chat_id = system_channel_id
     try:
         from gateway.platforms.base import resolve_proxy_url, proxy_kwargs_for_aiohttp
         _proxy = resolve_proxy_url(platform_env_var="DISCORD_PROXY")

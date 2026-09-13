@@ -94,6 +94,18 @@ YAML configuration takes profile isolation into account when Hermes runs in
 multiplex mode. Explicit environment variables take precedence over YAML
 values.
 
+System/status messages can use a dedicated channel selector. To keep them in
+one existing forum thread, point its `chat_id` at that thread:
+
+```yaml
+platforms:
+  discord-frflo:
+    system_channel:
+      platform: discord-frflo
+      chat_id: "1548801731427700787"
+      name: "Hermes system messages"
+```
+
 ## Security model
 
 Discord access is fail-closed by default. Configure at least one of the
