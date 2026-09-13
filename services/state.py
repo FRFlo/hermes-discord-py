@@ -285,10 +285,11 @@ class MessageStateMixin:
             try:
                 while True:
                     try:
-                        route = discord.http.Route(
-                            "POST", "/channels/{channel_id}/typing", channel_id=chat_id,
-                        )
-                        await self._client.http.request(route)
+                        channel = await self._resolve_channel(chat_id)
+                        if channel is None or not hasattr(channel, "typing"):
+                            return
+                        async with channel.typing():
+                            await asyncio.sleep(8)
                     except asyncio.CancelledError:
                         return
                     except Exception as e:
@@ -303,7 +304,6 @@ class MessageStateMixin:
                             return
                         await asyncio.sleep(retry_after)
                         continue
-                    await asyncio.sleep(12)
             except asyncio.CancelledError:
                 pass
             finally:

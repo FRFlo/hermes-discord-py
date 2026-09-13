@@ -1,14 +1,10 @@
-"""Atomic Discord slash-command registrations."""
+"""discord.py application-command Cogs."""
 
-from . import (
-    approve, bg, btw, compress, deny, help, insights, model, new, personality, plan,
-    queue, reasoning, reload_mcp, reload_skills, reset, restart, resume, retry, sethome,
-    status, stop, steer, title, undo, update, usage, voice,
-)
+from .cog import HermesCommandsCog
 
-__all__ = [
-    "approve", "bg", "btw", "compress", "deny", "help", "insights", "model", "new",
-    "personality", "plan", "queue", "reasoning", "reload_mcp", "reload_skills", "reset",
-    "restart", "resume", "retry", "sethome", "status", "stop", "steer", "title", "undo",
-    "update", "usage", "voice",
-]
+
+async def register_command_cogs(bot, adapter) -> None:
+    await bot.add_cog(HermesCommandsCog(adapter))
+
+
+__all__ = ["register_command_cogs"]

@@ -171,19 +171,7 @@ class MessagingMixin:
                     if final_delivery and i == len(chunks) - 1 and session_key:
                         from ..views.tool_trace import build_tool_trace_view
                         send_kwargs["view"] = build_tool_trace_view(discord, self, str(session_key))
-                    # Static messages use V2 when available.  Streaming edits, voice notes,
-                    # and oversized payloads remain on the legacy path below.
-                    from ..views.components_v2 import build_text_view
-                    v2_view = build_text_view(discord, chunk) if len(chunk) <= 4000 else None
-                    if v2_view is not None and "view" not in send_kwargs:
-                        send_kwargs = {"view": v2_view, "reference": chunk_reference}
-                    try:
-                        msg = await channel.send(**send_kwargs)
-                    except Exception:
-                        if v2_view is None:
-                            raise
-                        logger.debug("[%s] Components V2 send failed; retrying legacy payload", self.name, exc_info=True)
-                        msg = await channel.send(content=chunk, reference=chunk_reference)
+                    msg = await channel.send(**send_kwargs)
                 except Exception as e:
                     if chunk_reference is not None and self._is_reply_reference_rejected(e):
                         logger.warning(
@@ -264,16 +252,7 @@ class MessagingMixin:
         thread_name = _derive_forum_thread_name(content)
         starter_content = chunks[0] if chunks else thread_name
         try:
-            from ..views.components_v2 import build_text_view
-            v2_view = build_text_view(discord, starter_content) if len(starter_content) <= 4000 else None
-            if v2_view is not None:
-                try:
-                    thread = await forum_channel.create_thread(name=thread_name, view=v2_view)
-                except Exception:
-                    logger.debug("[%s] Components V2 forum starter failed; retrying legacy payload", self.name, exc_info=True)
-                    thread = await forum_channel.create_thread(name=thread_name, content=starter_content)
-            else:
-                thread = await forum_channel.create_thread(name=thread_name, content=starter_content)
+            thread = await forum_channel.create_thread(name=thread_name, content=starter_content)
         except Exception as e:
             logger.error("[%s] Failed to create forum thread in %s: %s", self.name, forum_channel.id, e)
             return SendResult(success=False, error=f"Forum thread creation failed: {e}")
@@ -314,21 +293,7 @@ class MessagingMixin:
         if files:
             kwargs["files"] = files
         try:
-            from ..views.components_v2 import build_media_view
-            v2_text = content.strip() if content else ""
-            all_files = ([file] if file is not None else []) + (files or [])
-            v2_view = build_media_view(discord, v2_text, all_files) if all_files else None
-            if v2_view is not None:
-                v2_kwargs = {key: value for key, value in kwargs.items() if key not in {"content", "file", "files"}}
-                v2_kwargs["view"] = v2_view
-                v2_kwargs["files"] = all_files
-                try:
-                    thread = await forum_channel.create_thread(**v2_kwargs)
-                except Exception:
-                    logger.debug("[%s] Components V2 forum file post failed; retrying legacy payload", self.name, exc_info=True)
-                    thread = await forum_channel.create_thread(**kwargs)
-            else:
-                thread = await forum_channel.create_thread(**kwargs)
+            thread = await forum_channel.create_thread(**kwargs)
         except Exception as e:
             logger.error(
                 "[%s] Failed to create forum thread with file in %s: %s", self.name,

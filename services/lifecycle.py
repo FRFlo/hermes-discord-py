@@ -54,6 +54,32 @@ def _consume_background_task_result(task: asyncio.Task) -> None:
     return _adapter._consume_background_task_result(task)
 
 
+class HermesDiscordBot(commands.Bot):
+    """Bot lifecycle owned by discord.py's standard ``setup_hook`` boundary."""
+
+    def __init__(self, adapter, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.adapter = adapter
+
+    async def setup_hook(self) -> None:
+        from ..events import register_events
+
+        await register_events(self, self.adapter)
+        if self.adapter._slash_commands:
+            from ..commands import register_command_cogs
+
+            await register_command_cogs(self, self.adapter)
+            self.adapter._register_slash_commands()
+
+        @self.tree.error
+        async def on_app_command_error(interaction, error) -> None:
+            logger.exception("[%s] Discord application command failed", self.adapter.name, exc_info=error)
+            if interaction.response.is_done():
+                await interaction.followup.send("Command failed unexpectedly.", ephemeral=True)
+            else:
+                await interaction.response.send_message("Command failed unexpectedly.", ephemeral=True)
+
+
 class LifecycleMixin:
     """Own Discord connection, liveness, and shutdown orchestration."""
     def _handle_bot_task_done(self, task: asyncio.Task) -> None:
@@ -387,16 +413,13 @@ class LifecycleMixin:
                 finally:
                     self._client = None
                     self._ready_event.clear()
-            self._client = commands.Bot(
+            self._client = HermesDiscordBot(
+                self,
                 command_prefix="!",  # Not really used, we handle raw messages
                 intents=intents,
                 allowed_mentions=_build_allowed_mentions(getattr(self.config, "extra", None)),
                 **proxy_kwargs_for_bot(proxy_url),
             )
-            from ..events import register_events
-            await register_events(self._client, self)
-            if self._slash_commands:
-                self._register_slash_commands()
             self._disconnecting = False
             self._bot_task = asyncio.create_task(self._client.start(self.config.token))
             self._bot_task.add_done_callback(self._handle_bot_task_done)
@@ -408,7 +431,7 @@ class LifecycleMixin:
             )
             self._running = True
             self._start_liveness_probe()
-            # Plugin-registered native handlers (discord.py Bot — add_listener()/event hooks).
+            # Third-party plugin hooks run only after discord.py completed setup_hook().
             self._wire_plugin_handlers(self._client)
             return True
         except asyncio.TimeoutError:

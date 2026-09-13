@@ -155,10 +155,7 @@ class ModelPickerView(_HermesView):
         except Exception as exc:
             result_text = f"Error switching model: {exc}"
         embed = self._config_embed(result_text, title="⚙ Model Switched", color=discord.Color.green())
-        if self._set_v2_text(result_text):
-            await interaction.edit_original_response(view=self)
-        else:
-            await interaction.edit_original_response(embed=embed, view=None)
+        await interaction.edit_original_response(embed=embed, view=None)
 
     async def _on_model_selected(self, interaction: discord.Interaction):
         if not await self._gate(interaction, resolved_msg="Already resolved~", unauth_msg="You're not authorized~"):
@@ -208,9 +205,6 @@ class ModelPickerView(_HermesView):
         if msg:
             try:
                 embed = self._config_embed("⏱ Selection expired — no model change.", color=discord.Color.greyple())
-                if self._set_v2_text(embed.description or ""):
-                    await msg.edit(view=self)
-                else:
-                    await msg.edit(embed=embed, view=self)
+                await msg.edit(embed=embed, view=self)
             except Exception:
                 pass

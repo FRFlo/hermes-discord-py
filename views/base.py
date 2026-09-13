@@ -6,13 +6,7 @@ from typing import Optional
 
 import discord
 
-from .components_v2 import components_v2_available, text_from_payload, update_text_display
-
-_ViewBase = (
-    getattr(discord.ui, "LayoutView", discord.ui.View)
-    if components_v2_available(discord)
-    else discord.ui.View
-)
+_ViewBase = discord.ui.View
 
 
 class _HermesView(_ViewBase):
@@ -83,25 +77,12 @@ class _HermesView(_ViewBase):
                     nested.disabled = True
 
     def _clear_controls(self) -> None:
-        """Remove interactive controls without dropping the V2 text display."""
-        text_display = getattr(self, "_v2_text_display", None)
+        """Remove all public legacy View controls."""
         self.clear_items()
-        if text_display is not None:
-            self._children.insert(0, text_display)
-            text_display._view = self
-            if hasattr(self, "_total_children"):
-                self._total_children = 1
-
-    def _set_v2_text(self, text: str) -> bool:
-        """Update the V2 text display while retaining legacy-view compatibility."""
-        return update_text_display(self, text)
 
     async def _edit_prompt(self, interaction, *, embed=None, view=...):
-        """Edit either a V2 text display or the legacy embed payload."""
+        """Edit a prompt through discord.py's public interaction response API."""
         selected_view = self if view is ... else view
-        if embed is not None and self._set_v2_text(text_from_payload({"embed": embed})):
-            await interaction.response.edit_message(view=self)
-            return
         await interaction.response.edit_message(embed=embed, view=selected_view)
 
     @staticmethod
@@ -113,9 +94,6 @@ class _HermesView(_ViewBase):
         msg = self._message
         if msg:
             try:
-                if self._set_v2_text(footer):
-                    await msg.edit(view=self)
-                    return
                 embed = self._first_embed(msg)
                 if embed:
                     embed.color = discord.Color.greyple()
@@ -132,9 +110,6 @@ class _HermesView(_ViewBase):
             embed.color = color
             embed.set_footer(text=footer)
         self._disable_all()
-        if self._set_v2_text(footer):
-            await interaction.response.edit_message(view=self)
-            return
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def on_timeout(self):

@@ -308,30 +308,7 @@ class ThreadLifecycleMixin:
         try:
             channel = await self._resolve_channel(_prompt_target_id(chat_id, metadata))
             send_kwargs, view = build(channel)
-            legacy_kwargs = dict(send_kwargs)
-            legacy_view = None
-            if view is not None and hasattr(view, "_discord_module"):
-                from ..views.components_v2 import (
-                    components_v2_available, install_text_display, legacy_view_for, text_from_payload,
-                )
-                v2_enabled = components_v2_available(view._discord_module)
-                if not v2_enabled:
-                    install_text_display = None
-                if install_text_display is not None:
-                    install_text_display(view, text_from_payload(send_kwargs))
-                    legacy_view = legacy_view_for(view, view._discord_module)
-                    send_kwargs = {
-                        key: value for key, value in send_kwargs.items()
-                        if key not in {"content", "embed", "embeds"}
-                    }
-            try:
-                msg = await channel.send(**send_kwargs)
-            except Exception:
-                if legacy_view is None:
-                    raise
-                legacy_kwargs["view"] = legacy_view
-                logger.debug("[%s] Components V2 prompt failed; retrying legacy prompt", self.name, exc_info=True)
-                msg = await channel.send(**legacy_kwargs)
+            msg = await channel.send(**send_kwargs)
             if view is not None:
                 view._message = msg
             return SendResult(success=True, message_id=str(msg.id))

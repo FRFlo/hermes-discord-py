@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
@@ -44,16 +43,7 @@ class DiscordMediaMixin:
                 channel, content=(caption or "").strip(), files=[discord_file],
             )
             return result
-        from plugins.platforms.discord.views.components_v2 import build_media_view
-        v2_view = build_media_view(discord, caption or "", [discord_file])
-        if v2_view is not None:
-            try:
-                msg = await channel.send(view=v2_view, files=[discord_file])
-            except Exception:
-                logger.debug("[%s] Components V2 file send failed; retrying legacy payload", self.name, exc_info=True)
-                msg = await channel.send(content=caption if caption else None, files=[discord_file])
-        else:
-            msg = await channel.send(content=caption if caption else None, files=[discord_file])
+        msg = await channel.send(content=caption if caption else None, files=[discord_file])
         attachments = getattr(msg, "attachments", None) or []
         if not attachments:
             # Discord accepted the message but attached nothing: fail loud instead of a silent drop.
@@ -160,16 +150,7 @@ class DiscordMediaMixin:
                         channel, content=(content or "").strip(), files=files,
                     )
                 else:
-                    from plugins.platforms.discord.views.components_v2 import build_media_view
-                    v2_view = build_media_view(_discord_mod, content or "", files)
-                    if v2_view is not None:
-                        try:
-                            await channel.send(view=v2_view, files=files)
-                        except Exception:
-                            logger.debug("[%s] Components V2 image send failed; retrying legacy payload", self.name, exc_info=True)
-                            await channel.send(content=content, files=files)
-                    else:
-                        await channel.send(content=content, files=files)
+                    await channel.send(content=content, files=files)
                 delivered = True
             except Exception as e:
                 logger.warning(
@@ -211,46 +192,17 @@ class DiscordMediaMixin:
                 return await self._forum_post_file(
                     channel, content=(caption or "").strip(), file=forum_file,
                 )
-            # Try sending as a native voice message via raw API (flags=8192).
+            # discord.py exposes attachments publicly but not Discord's native voice-message flags.
+            # Send a regular audio attachment rather than relying on private HTTP internals.
+            file = discord.File(io.BytesIO(file_data), filename=filename)
             try:
-                import base64
-                try:
-                    from mutagen.oggopus import OggOpus
-                    duration_secs = OggOpus(audio_path).info.length
-                except Exception:
-                    duration_secs = max(1.0, len(file_data) / 2000.0)
-                payload_data = {
-                    "flags": 8192,
-                    "attachments": [{
-                        "id": "0", "filename": "voice-message.ogg", "duration_secs": round(duration_secs, 2),
-                        "waveform": base64.b64encode(bytes([128] * 256)).decode(),
-                    }],
-                }
-                if reference is not None:
-                    payload_data["message_reference"] = {"message_id": str(reply_to), "fail_if_not_exists": False}
-                form = [
-                    {"name": "payload_json", "value": json.dumps(payload_data)},
-                    {
-                        "name": "files[0]", "value": file_data, "filename": "voice-message.ogg",
-                        "content_type": "audio/ogg",
-                    },
-                ]
-                msg_data = await self._client.http.request(
-                    discord.http.Route("POST", "/channels/{channel_id}/messages", channel_id=channel.id),
-                    form=form,
-                )
-                return SendResult(success=True, message_id=str(msg_data["id"]))
-            except Exception as voice_err:
-                logger.debug("Voice message flag failed, falling back to file: %s", voice_err)
-                file = discord.File(io.BytesIO(file_data), filename=filename)
-                try:
-                    msg = await channel.send(file=file, reference=reference)
-                except Exception as send_err:
-                    if reference is not None and self._is_reply_reference_rejected(send_err):
-                        msg = await channel.send(file=file, reference=None)
-                    else:
-                        raise
-                return SendResult(success=True, message_id=str(msg.id))
+                msg = await channel.send(content=caption or None, file=file, reference=reference)
+            except Exception as send_err:
+                if reference is not None and self._is_reply_reference_rejected(send_err):
+                    msg = await channel.send(content=caption or None, file=file, reference=None)
+                else:
+                    raise
+            return SendResult(success=True, message_id=str(msg.id))
         except Exception as e:  # pragma: no cover - defensive logging
             logger.error("[%s] Failed to send audio: %s", self.name, e, exc_info=True)
             return SendResult(success=False, error=str(e))
@@ -308,16 +260,7 @@ class DiscordMediaMixin:
                 file = discord.File(io.BytesIO(data), filename=filename_for(headers))
                 if self._is_forum_parent(channel):
                     return await self._forum_post_file(channel, content=(caption or "").strip(), file=file)
-                from plugins.platforms.discord.views.components_v2 import build_media_view
-                v2_view = build_media_view(discord, caption or "", [file])
-                if v2_view is not None:
-                    try:
-                        msg = await channel.send(view=v2_view, files=[file])
-                    except Exception:
-                        logger.debug("[%s] Components V2 media send failed; retrying legacy payload", self.name, exc_info=True)
-                        msg = await channel.send(content=caption if caption else None, file=file)
-                else:
-                    msg = await channel.send(content=caption if caption else None, file=file)
+                msg = await channel.send(content=caption if caption else None, file=file)
                 return SendResult(success=True, message_id=str(msg.id))
         except ImportError:
             logger.warning("[%s] aiohttp not installed, falling back to URL. Run: pip install aiohttp", self.name, exc_info=True)

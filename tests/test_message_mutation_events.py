@@ -2,6 +2,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from commands import register_command_cogs
+from commands.cog import HermesCommandsCog
 from events import register_events
 from events.interaction import InteractionEvent
 from events.message_create import MessageCreateEvent
@@ -65,6 +67,15 @@ def test_event_cogs_are_registered_explicitly_with_discord_py():
         ReadyEvent, MessageCreateEvent, MessageEditEvent, MessageDeleteEvent,
         ThreadCreateEvent, ThreadUpdateEvent, VoiceStateUpdateEvent, InteractionEvent,
     ]
+
+
+def test_command_cog_is_registered_explicitly_with_discord_py():
+    adapter, _handler = _adapter()
+    bot = SimpleNamespace(add_cog=AsyncMock())
+
+    asyncio.run(register_command_cogs(bot, adapter))
+
+    assert isinstance(bot.add_cog.await_args.args[0], HermesCommandsCog)
 
 
 def test_raw_edit_forwards_discord_payload_directly():

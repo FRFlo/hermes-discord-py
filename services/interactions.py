@@ -84,16 +84,7 @@ class InteractionsMixin:
             return
         try:
             if followup_msg:
-                from ..views.components_v2 import build_text_view
-                view = build_text_view(discord, followup_msg)
-                if view is not None:
-                    try:
-                        await interaction.edit_original_response(view=view)
-                    except Exception:
-                        logger.debug("Discord V2 slash acknowledgement failed; retrying legacy content", exc_info=True)
-                        await interaction.edit_original_response(content=followup_msg)
-                else:
-                    await interaction.edit_original_response(content=followup_msg)
+                await interaction.edit_original_response(content=followup_msg)
             else:
                 await interaction.delete_original_response()
         except Exception as e:
@@ -140,21 +131,6 @@ class InteractionsMixin:
         if not self._client:
             return
         tree = self._client.tree
-        # Keep each hand-written command in its own module.  The remaining
-        # table-driven commands are migrated in the same way incrementally;
-        # generated COMMAND_REGISTRY entries stay handled below.
-        from ..commands import (
-            approve, bg, btw, compress, deny, help, insights, model, new, personality, plan,
-            queue, reasoning, reload_mcp, reload_skills, reset, restart, resume, retry, sethome,
-            status, stop, steer, title, undo, update, usage, voice,
-        )
-
-        for command_module in (
-            approve, bg, btw, compress, deny, help, insights, model, new, personality, plan,
-            queue, reasoning, reload_mcp, reload_skills, reset, restart, resume, retry, sethome,
-            status, stop, steer, title, undo, update, usage, voice,
-        ):
-            command_module.register(tree, self)
         for name, description, args, template, followup in _NATIVE_SLASH_COMMANDS:
             if template is None:
                 self._register_thread_slash(tree, name, description)
@@ -320,24 +296,14 @@ class InteractionsMixin:
             error = result.get("error", "unknown error")
             if deferred_response:
                 text = f"Failed to create thread: {error}"
-                from ..views.components_v2 import build_text_view
-                view = build_text_view(discord, text)
-                try:
-                    await interaction.followup.send(view=view, ephemeral=True) if view else await interaction.followup.send(text, ephemeral=True)
-                except Exception:
-                    await interaction.followup.send(text, ephemeral=True)
+                await interaction.followup.send(text, ephemeral=True)
             return
         thread_id = result.get("thread_id")
         thread_name = result.get("thread_name") or name
         link = f"<#{thread_id}>" if thread_id else f"**{thread_name}**"
         if deferred_response:
             text = f"Created thread {link}"
-            from ..views.components_v2 import build_text_view
-            view = build_text_view(discord, text)
-            try:
-                await interaction.followup.send(view=view, ephemeral=True) if view else await interaction.followup.send(text, ephemeral=True)
-            except Exception:
-                await interaction.followup.send(text, ephemeral=True)
+            await interaction.followup.send(text, ephemeral=True)
         # Track thread participation so follow-ups don't require @mention
         if thread_id:
             self._threads.mark(thread_id)
