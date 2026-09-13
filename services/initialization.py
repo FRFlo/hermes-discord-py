@@ -89,6 +89,9 @@ class InitializationMixin:
         self._discord_recovery_store = DiscordRecoveryStore(get_hermes_home())
         # Dedup cache: Discord RESUME replays events after reconnects.
         self._dedup = MessageDeduplicator()
+        # Message identity cache for raw delete events. discord.py's regular delete callback only
+        # fires while the full message remains in its comparatively small internal cache.
+        self._platform_message_identities: Dict[str, Dict[str, Any]] = {}
         # Reply threading mode: "off", "first" (default; first chunk only), "all" (every chunk).
         self._reply_to_mode: str = getattr(config, 'reply_to_mode', 'first') or 'first'
         self._slash_commands: bool = self.config.extra.get("slash_commands", True)

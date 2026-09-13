@@ -14,7 +14,24 @@ async def handle(message, adapter) -> None:
     )
 
 
+async def handle_raw(payload, adapter) -> None:
+    """Handle deletes independently of discord.py's internal message cache."""
+    cached_message = getattr(payload, "cached_message", None)
+    if cached_message is not None:
+        identities = getattr(adapter, "_platform_message_identities", None)
+        if identities is not None:
+            identities.pop(str(getattr(payload, "message_id", "")), None)
+        await handle(cached_message, adapter)
+        return
+    await adapter._emit_platform_event(
+        "message_deleted",
+        lambda: adapter._raw_message_delete_parts(
+            payload, include_bot=getattr(adapter, "_platform_event_sync_enabled", False),
+        ),
+    )
+
+
 def register(client, adapter) -> None:
     @client.event
-    async def on_message_delete(message):
-        await handle(message, adapter)
+    async def on_raw_message_delete(payload):
+        await handle_raw(payload, adapter)

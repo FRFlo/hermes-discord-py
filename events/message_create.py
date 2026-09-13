@@ -5,6 +5,7 @@ import asyncio
 
 async def handle(message, adapter) -> bool:
     """Wait for readiness, apply admission policy, and dispatch the message."""
+    adapter._remember_platform_message(message)
     if not adapter._ready_event.is_set():
         try:
             await asyncio.wait_for(adapter._ready_event.wait(), timeout=30.0)

@@ -13,6 +13,60 @@ logger = _adapter.logger
 class EventNormalizationMixin:
     """Build platform-event envelopes and authorized session sources."""
 
+    def _remember_platform_message(self, message) -> None:
+        """Keep enough identity data to authorize a later uncached raw delete."""
+        message_id = getattr(message, "id", None)
+        channel = getattr(message, "channel", None)
+        channel_id = getattr(channel, "id", None)
+        author = getattr(message, "author", None)
+        author_id = getattr(author, "id", None)
+        if message_id is None or channel_id is None or author_id is None:
+            return
+        thread_id, chat_id = self._thread_id_and_chat_for_channel(channel)
+        guild = getattr(message, "guild", None)
+        identities = getattr(self, "_platform_message_identities", None)
+        if identities is None:
+            identities = self._platform_message_identities = {}
+        key = str(message_id)
+        identities.pop(key, None)
+        identities[key] = {
+            "chat_id": chat_id,
+            "thread_id": thread_id,
+            "guild_id": str(getattr(guild, "id", "")) if guild else None,
+            "user_id": str(author_id),
+            "user_name": getattr(author, "display_name", None),
+            "author_is_bot": bool(getattr(author, "bot", False)),
+        }
+        if len(identities) > 4096:
+            identities.pop(next(iter(identities)))
+
+    def _raw_message_delete_parts(self, payload, *, include_bot: bool = False):
+        """Normalize a raw delete using cached identity captured by ``on_message``."""
+        message_id = getattr(payload, "message_id", None)
+        if message_id is None:
+            return None
+        identities = getattr(self, "_platform_message_identities", {})
+        identity = identities.pop(str(message_id), None)
+        if identity is None:
+            return None
+        if identity["author_is_bot"] and not include_bot:
+            return None
+        chat_id = identity["chat_id"]
+        user_id = identity["user_id"]
+        event_payload = {
+            "chat_id": str(chat_id)[:128],
+            "message_id": str(message_id)[:128],
+            "thread_id": identity["thread_id"][:128] if identity["thread_id"] else None,
+            "author_id": user_id[:128],
+        }
+        if include_bot and identity["author_is_bot"]:
+            event_payload["author_is_bot"] = True
+        return event_payload, dict(
+            chat_id=str(chat_id), user_id=user_id, user_name=identity["user_name"],
+            thread_id=identity["thread_id"], guild_id=identity["guild_id"],
+            message_id=str(message_id),
+        )
+
     def _thread_id_and_chat_for_channel(self, channel) -> tuple[Optional[str], Optional[str]]:
         """Return ``(thread_id, chat_id)``; for a thread chat_id is the thread id (dispatch session key)."""
         if channel is None:

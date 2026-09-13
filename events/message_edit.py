@@ -17,7 +17,18 @@ async def handle(before, after, adapter) -> None:
     )
 
 
+async def handle_raw(payload, adapter) -> None:
+    """Handle edits even when Discord evicted the original message from cache."""
+    data = getattr(payload, "data", None)
+    if isinstance(data, dict) and "content" not in data:
+        return  # embed/link-preview updates are not user text edits
+    message = getattr(payload, "message", None) or getattr(payload, "cached_message", None)
+    if message is None:
+        return
+    await handle(getattr(payload, "cached_message", None), message, adapter)
+
+
 def register(client, adapter) -> None:
     @client.event
-    async def on_message_edit(before, after):
-        await handle(before, after, adapter)
+    async def on_raw_message_edit(payload):
+        await handle_raw(payload, adapter)
