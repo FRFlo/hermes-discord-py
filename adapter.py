@@ -28,6 +28,7 @@ from collections import defaultdict
 from contextlib import suppress
 from typing import Callable, Dict, List, Optional, Any, Tuple
 from urllib.parse import quote, urljoin
+from urllib.parse import unquote
 
 from agent.async_utils import (consume_detached_task_result as _consume_background_task_result)
 from agent.display import ToolPreview
@@ -711,13 +712,21 @@ class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMi
         )
         try:
             if custom_id.startswith("hermes:trace-export:"):
-                session_key = custom_id[len("hermes:trace-export:"):]
+                payload = custom_id[len("hermes:trace-export:"):]
+                session_key, separator, inbound_id = payload.partition("|")
+                session_key = unquote(session_key)
+                inbound_id = unquote(inbound_id) if separator else None
                 await send_trace_markdown(
-                    interaction, discord, get_tool_trace_markdown(self, session_key), session_key,
+                    interaction, discord,
+                    get_tool_trace_markdown(self, session_key, inbound_id), session_key,
                 )
             else:
+                payload = custom_id[len("hermes:trace:"):]
+                session_key, separator, inbound_id = payload.partition("|")
+                session_key = unquote(session_key)
+                inbound_id = unquote(inbound_id) if separator else None
                 await send_ephemeral_trace(
-                    interaction, get_tool_trace_text(self, custom_id[len("hermes:trace:"):]),
+                    interaction, get_tool_trace_text(self, session_key, inbound_id),
                 )
         except Exception:
             logger.debug("Persistent tool trace interaction failed", exc_info=True)

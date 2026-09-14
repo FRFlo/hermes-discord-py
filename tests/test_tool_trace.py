@@ -3,6 +3,7 @@ import asyncio
 from views.tool_trace import (
     _format_tool_call,
     _format_tool_result,
+    _response_messages,
     _trace_text,
     format_live_tool_call,
     delete_response_turn_from_session,
@@ -38,6 +39,33 @@ def test_final_action_view_contains_all_response_buttons():
     assert [button.label for button in view.children] == [
         "Afficher le raisonnement", "Exporter en Markdown", "Tout régénérer", "Continuer", "Supprimer",
     ]
+
+
+def test_trace_buttons_encode_the_response_turn_identity():
+    from views.tool_trace import build_tool_trace_view
+
+    class Button:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class View:
+        def __init__(self, **_kwargs):
+            self.children = []
+
+        def add_item(self, item):
+            self.children.append(item)
+
+    discord = type("Discord", (), {
+        "ui": type("UI", (), {"View": View, "Button": Button}),
+        "ButtonStyle": type("Styles", (), {
+            "secondary": "secondary", "primary": "primary", "danger": "danger",
+        }),
+    })
+
+    view = build_tool_trace_view(discord, object(), "agent:discord:dm:42", "in-7")
+
+    assert view.children[0].custom_id == "hermes:trace:agent%3Adiscord%3Adm%3A42|in-7"
+    assert view.children[1].custom_id == "hermes:trace-export:agent%3Adiscord%3Adm%3A42|in-7"
 
 
 def test_format_tool_call_uses_code_call_shape():
@@ -129,6 +157,24 @@ def test_trace_marks_explicit_technical_errors_and_missing_results():
 
     assert "🔧 broken() → ❌ \"failure\"" in rendered
     assert "🔧 pending() → ✅ ∅" in rendered
+
+
+def test_response_trace_selects_the_requested_turn_not_latest_session_turn():
+    messages = [
+        {"role": "user", "message_id": "in-1", "content": "first"},
+        {"role": "assistant", "tool_calls": [{"function": {"name": "first_tool", "arguments": {}}}]},
+        {"role": "tool", "content": "first result"},
+        {"role": "user", "message_id": "in-2", "content": "second"},
+        {"role": "assistant", "tool_calls": [{"function": {"name": "second_tool", "arguments": {}}}]},
+        {"role": "tool", "content": "second result"},
+    ]
+
+    rendered = _trace_text(_response_messages(messages, "in-1"))
+
+    assert "first_tool" in rendered
+    assert "first result" in rendered
+    assert "second_tool" not in rendered
+    assert "second result" not in rendered
 
 
 def test_split_trace_never_exceeds_discord_safe_limit():

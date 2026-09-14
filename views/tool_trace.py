@@ -7,6 +7,7 @@ import io
 import json
 import re
 from typing import Any
+from urllib.parse import quote, unquote
 
 
 TRACE_LINE_LIMIT = 240
@@ -181,6 +182,27 @@ def _trace_text(messages: list[dict[str, Any]], *, compact: bool = True) -> str:
     return "\n".join(lines)
 
 
+def _response_messages(messages: list[dict[str, Any]], inbound_id: str | None) -> list[dict[str, Any]]:
+    """Restrict a session transcript to the user turn behind one response."""
+    if not inbound_id:
+        return messages
+    start = next(
+        (index for index, message in enumerate(messages)
+         if isinstance(message, dict)
+         and message.get("role") == "user"
+         and str(message.get("message_id") or "") == str(inbound_id)),
+        None,
+    )
+    if start is None:
+        return messages
+    end = next(
+        (index for index in range(start + 1, len(messages))
+         if isinstance(messages[index], dict) and messages[index].get("role") == "user"),
+        len(messages),
+    )
+    return messages[start:end]
+
+
 def split_discord_messages(text: str, *, limit: int = 1900) -> list[str]:
     """Split trace text below Discord's 2000-character limit.
 
@@ -322,7 +344,15 @@ def _format_tool_result(result: str) -> str:
     return f"↳ **Result**\n{fence}\n{result[:3500]}\n{fence}"
 
 
-def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -> Any:
+def _trace_custom_id(prefix: str, session_key: str, inbound_id: str | None) -> str:
+    if not inbound_id:
+        return f"{prefix}{session_key}"
+    return f"{prefix}{quote(str(session_key), safe='')}|{quote(str(inbound_id), safe='')}"
+
+
+def build_tool_trace_view(
+    discord_module: Any, adapter: Any, session_key: str, inbound_id: str | None = None,
+) -> Any:
     """Build the persistent actions attached to a completed assistant response.
 
     The regenerate action deliberately goes through the existing ``/retry`` command
@@ -375,12 +405,12 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
         class ShowTraceButton(discord_module.ui.Button):
             def __init__(self) -> None:
                 super().__init__(label="Afficher le raisonnement", style=discord_module.ButtonStyle.secondary,
-                                 custom_id=f"hermes:trace:{session_key}")
+                                 custom_id=_trace_custom_id("hermes:trace:", str(session_key), inbound_id))
 
             async def callback(self, interaction: Any) -> None:
                 try:
                     await send_ephemeral_trace(
-                        interaction, get_tool_trace_text(adapter, str(session_key)),
+                        interaction, get_tool_trace_text(adapter, str(session_key), inbound_id),
                     )
                 except Exception:
                     if not interaction.response.is_done():
@@ -390,13 +420,13 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
         class ExportTraceButton(discord_module.ui.Button):
             def __init__(self) -> None:
                 super().__init__(label="Exporter en Markdown", style=discord_module.ButtonStyle.secondary,
-                                 custom_id=f"hermes:trace-export:{session_key}")
+                                 custom_id=_trace_custom_id("hermes:trace-export:", str(session_key), inbound_id))
 
             async def callback(self, interaction: Any) -> None:
                 try:
                     await send_trace_markdown(
                         interaction, discord_module,
-                        get_tool_trace_markdown(adapter, str(session_key)),
+                        get_tool_trace_markdown(adapter, str(session_key), inbound_id),
                         str(session_key),
                     )
                 except Exception:
@@ -499,18 +529,24 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
     return ToolTraceView()
 
 
-def get_tool_trace_text(adapter: Any, session_key: str) -> str:
+def get_tool_trace_text(
+    adapter: Any, session_key: str, inbound_id: str | None = None,
+) -> str:
     """Load a trace from the existing session store, or return a safe fallback."""
-    return _get_tool_trace(adapter, session_key, compact=True)
+    return _get_tool_trace(adapter, session_key, inbound_id=inbound_id, compact=True)
 
 
-def get_tool_trace_markdown(adapter: Any, session_key: str) -> str:
+def get_tool_trace_markdown(
+    adapter: Any, session_key: str, inbound_id: str | None = None,
+) -> str:
     """Load the same trace presentation with complete, non-truncated values."""
-    return _get_tool_trace(adapter, session_key, compact=False)
+    return _get_tool_trace(adapter, session_key, inbound_id=inbound_id, compact=False)
 
 
-def _get_tool_trace(adapter: Any, session_key: str, *, compact: bool) -> str:
+def _get_tool_trace(
+    adapter: Any, session_key: str, *, inbound_id: str | None, compact: bool,
+) -> str:
     store = getattr(adapter, "_session_store", None)
     entry = store.lookup_by_session_key(str(session_key)) if store is not None else None
     transcript = store.load_transcript(entry.session_id) if entry is not None else []
-    return _trace_text(transcript, compact=compact)
+    return _trace_text(_response_messages(transcript, inbound_id), compact=compact)

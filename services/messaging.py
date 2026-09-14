@@ -250,6 +250,11 @@ class MessagingMixin:
             session_key = self._response_session_key(metadata, reply_to)
             pending_session_key, pending_inbound_id = self._pending_response_turn(channel.id)
             session_key = session_key or pending_session_key
+            inbound_id = (
+                (metadata or {}).get("_hermes_inbound_message_id")
+                or (metadata or {}).get("reply_to_message_id")
+                or pending_inbound_id
+            )
             for i, chunk in enumerate(chunks):
                 if self._reply_to_mode == "all":
                     chunk_reference = reference
@@ -261,7 +266,9 @@ class MessagingMixin:
                     # trace itself is loaded lazily from the existing session store.
                     if final_delivery and i == len(chunks) - 1 and session_key:
                         from ..views.tool_trace import build_tool_trace_view
-                        send_kwargs["view"] = build_tool_trace_view(discord, self, str(session_key))
+                        send_kwargs["view"] = build_tool_trace_view(
+                            discord, self, str(session_key), str(inbound_id) if inbound_id else None,
+                        )
                     msg = await channel.send(**send_kwargs)
                 except Exception as e:
                     if chunk_reference is not None and self._is_reply_reference_rejected(e):
@@ -289,8 +296,6 @@ class MessagingMixin:
                     self._temporary_progress_ids.setdefault(str(_target_id), set()).update(message_ids)
                 elif not _looks_like_nonconversational_history_message(content):
                     self._last_self_message_id[_target_id] = message_ids[-1]
-                inbound_id = metadata.get("_hermes_inbound_message_id") if metadata else None
-                inbound_id = inbound_id or pending_inbound_id
                 if session_key and inbound_id:
                     await self._track_response_message_ids(session_key, str(inbound_id), message_ids)
                 # Tool-progress messages are deliberately transient on Discord.  Delete
@@ -448,10 +453,13 @@ class MessagingMixin:
             session_key = self._response_session_key(metadata, message_id)
             pending_session_key, pending_inbound_id = self._pending_response_turn(chat_id)
             session_key = session_key or pending_session_key
+            inbound_id = (metadata or {}).get("reply_to_message_id") or pending_inbound_id
             final_view = None
             if finalize and session_key:
                 from ..views.tool_trace import build_tool_trace_view
-                final_view = build_tool_trace_view(discord, self, str(session_key))
+                final_view = build_tool_trace_view(
+                    discord, self, str(session_key), str(inbound_id) if inbound_id else None,
+                )
             _preview_key = (str(chat_id), str(message_id))
             _saturated_preview = False
             if finalize:
@@ -463,7 +471,6 @@ class MessagingMixin:
                     result = await self._edit_overflow_split(
                         channel, msg, message_id, content, view=final_view,
                     )
-                    inbound_id = (metadata or {}).get("reply_to_message_id") or pending_inbound_id
                     if result.success and session_key and inbound_id:
                         await self._track_response_message_ids(
                             session_key, str(inbound_id),
@@ -496,7 +503,6 @@ class MessagingMixin:
                         result = await self._edit_overflow_split(
                             channel, msg, message_id, content, view=final_view,
                         )
-                        inbound_id = (metadata or {}).get("reply_to_message_id") or pending_inbound_id
                         if result.success and session_key and inbound_id:
                             await self._track_response_message_ids(
                                 session_key, str(inbound_id),
@@ -513,7 +519,6 @@ class MessagingMixin:
                     raise
             result = SendResult(success=True, message_id=message_id)
             if finalize:
-                inbound_id = (metadata or {}).get("reply_to_message_id") or pending_inbound_id
                 if session_key and inbound_id:
                     await self._track_response_message_ids(
                         session_key, str(inbound_id), [message_id],
