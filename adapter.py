@@ -701,15 +701,24 @@ class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMi
     async def _on_tool_trace_interaction(self, interaction: Any) -> None:
         """Handle persistent trace buttons after a bot restart."""
         custom_id = getattr(getattr(interaction, "data", None), "get", lambda *_: None)("custom_id")
-        if not isinstance(custom_id, str) or not custom_id.startswith("hermes:trace:"):
+        if not isinstance(custom_id, str) or not custom_id.startswith(("hermes:trace:", "hermes:trace-export:")):
             return
         if getattr(getattr(interaction, "response", None), "is_done", lambda: True)():
             return
-        from .views.tool_trace import get_tool_trace_text, send_ephemeral_trace
+        from .views.tool_trace import (
+            get_tool_trace_markdown, get_tool_trace_text, send_ephemeral_trace,
+            send_trace_markdown,
+        )
         try:
-            await send_ephemeral_trace(
-                interaction, get_tool_trace_text(self, custom_id[len("hermes:trace:"):]),
-            )
+            if custom_id.startswith("hermes:trace-export:"):
+                session_key = custom_id[len("hermes:trace-export:"):]
+                await send_trace_markdown(
+                    interaction, discord, get_tool_trace_markdown(self, session_key), session_key,
+                )
+            else:
+                await send_ephemeral_trace(
+                    interaction, get_tool_trace_text(self, custom_id[len("hermes:trace:"):]),
+                )
         except Exception:
             logger.debug("Persistent tool trace interaction failed", exc_info=True)
 

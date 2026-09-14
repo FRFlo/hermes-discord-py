@@ -36,7 +36,7 @@ def test_final_action_view_contains_all_response_buttons():
     view = build_tool_trace_view(discord, object(), "agent:discord:dm:42")
 
     assert [button.label for button in view.children] == [
-        "Afficher le raisonnement", "Tout régénérer", "Continuer", "Supprimer",
+        "Afficher le raisonnement", "Exporter en Markdown", "Tout régénérer", "Continuer", "Supprimer",
     ]
 
 
@@ -87,9 +87,48 @@ def test_trace_renders_call_and_result_together():
         {"role": "tool", "content": "12 lines"},
     ])
 
-    assert "⚙️ `read_file(path=" in rendered
-    assert "↳ **Result**" in rendered
+    assert "🔧 read_file({\"path\":\"README.md\"}) → ✅" in rendered
     assert "12 lines" in rendered
+
+
+def test_compact_trace_reduces_large_nested_values_and_keeps_keys():
+    rendered = _trace_text([{
+        "role": "assistant", "tool_calls": [{"function": {
+            "name": "search", "arguments": {
+                "query": "short", "documents": [{"title": "a", "body": "x" * 1000}],
+            },
+        }}],
+    }])
+
+    line = rendered.splitlines()[1]
+    assert len(line) <= 240
+    assert '"query":"short"' in line
+    assert '"documents"' in line
+    assert "1000 caractères" in line
+
+
+def test_full_trace_markdown_uses_same_layout_without_truncation():
+    rendered = _trace_text([{
+        "role": "assistant", "tool_calls": [{"function": {
+            "name": "write", "arguments": {"content": "x" * 400},
+        }}],
+    }], compact=False)
+
+    assert rendered.startswith("🔎 **Tool trace**\n🔧 write(")
+    assert "x" * 400 in rendered
+
+
+def test_trace_marks_explicit_technical_errors_and_missing_results():
+    rendered = _trace_text([
+        {"role": "assistant", "tool_calls": [
+            {"function": {"name": "broken", "arguments": {}}},
+            {"function": {"name": "pending", "arguments": {}}},
+        ]},
+        {"role": "tool", "content": "failure", "is_error": True},
+    ])
+
+    assert "🔧 broken() → ❌ \"failure\"" in rendered
+    assert "🔧 pending() → ✅ ∅" in rendered
 
 
 def test_split_trace_never_exceeds_discord_safe_limit():

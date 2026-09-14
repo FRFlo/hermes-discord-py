@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import re
 from typing import Any
+
+
+TRACE_LINE_LIMIT = 240
 
 
 def _safe_code_name(value: Any) -> str:
@@ -21,36 +26,158 @@ def _compact_call_arguments(arguments: Any) -> str:
     )
 
 
-def _trace_text(messages: list[dict[str, Any]]) -> str:
-    """Render tool calls and results from the persisted session transcript."""
-    # A button belongs to the latest assistant response, not the entire session.
-    last_user = max((i for i, item in enumerate(messages)
-                     if isinstance(item, dict) and item.get("role") == "user"), default=-1)
-    messages = messages[last_user + 1:]
-    lines: list[str] = ["🔎 **Tool trace**"]
-    found = False
+def _json_value(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _size_marker(value: Any) -> str:
+    if isinstance(value, str):
+        return f"<{len(value)} caractères>"
+    if isinstance(value, list):
+        return f"<{len(value)} éléments>"
+    if isinstance(value, dict):
+        return f"<{len(value)} clés>"
+    return f"<{len(_json_value(value))} caractères>"
+
+
+def _compact_value(value: Any, limit: int) -> str:
+    """Keep small values and structure, replacing the largest contents first."""
+    full = _json_value(value)
+    if len(full) <= limit:
+        return full
+    if isinstance(value, (str, list, dict)):
+        marker = _size_marker(value)
+        if isinstance(value, str):
+            return json.dumps(marker, ensure_ascii=False)
+        if isinstance(value, list):
+            if not value or limit <= len("[<0 éléments>]"):
+                return f"[{marker}]"
+            parts: list[str] = []
+            remaining = len(value)
+            for item in value:
+                # Reserve space for the remaining-elements marker and delimiters.
+                reserve = len(f", <{remaining - 1} éléments supplémentaires>") + 1
+                item_text = _compact_value(item, max(8, limit - len("[]") - reserve))
+                candidate = "[" + ", ".join([*parts, item_text])
+                if len(candidate) + reserve > limit:
+                    break
+                parts.append(item_text)
+                remaining -= 1
+            if remaining:
+                parts.append(f"<{remaining} éléments supplémentaires>")
+            rendered = "[" + ", ".join(parts) + "]"
+            return rendered if len(rendered) <= limit else f"[{marker}]"
+        if not value or limit <= len("{<0 clés>}"):
+            return "{" + marker + "}"
+        parts = []
+        remaining = len(value)
+        for key, item in value.items():
+            key_text = _json_value(str(key))
+            reserve = len(f", <{remaining - 1} clés restantes>") + 1
+            item_text = _compact_value(item, max(8, limit - len(key_text) - 5 - reserve))
+            entry = f"{key_text}:{item_text}"
+            candidate = "{" + ",".join([*parts, entry])
+            if len(candidate) + reserve > limit:
+                break
+            parts.append(entry)
+            remaining -= 1
+        if remaining:
+            parts.append(f"<{remaining} clés restantes>")
+        rendered = "{" + ",".join(parts) + "}"
+        return rendered if len(rendered) <= limit else "{" + marker + "}"
+    # Numbers, booleans and null are normally tiny; retain their valid JSON shape.
+    return full
+
+
+def _compact_call(name: Any, arguments: Any, *, limit: int = TRACE_LINE_LIMIT) -> str:
+    safe_name = _safe_code_name(name)
+    if not arguments:
+        return f"{safe_name}()"
+    prefix = f"{safe_name}("
+    budget = max(8, limit - len(prefix) - 1)
+    return prefix + _compact_value(arguments, budget) + ")"
+
+
+def _parse_tool_content(content: Any) -> Any:
+    if isinstance(content, (dict, list, int, float, bool)) or content is None:
+        return content
+    text = str(content or "")
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        return text
+
+
+def _trace_records(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
     for message in messages:
         if not isinstance(message, dict):
             continue
         for call in message.get("tool_calls") or []:
             function = call.get("function") if isinstance(call, dict) else None
-            if not isinstance(function, dict):
-                continue
-            found = True
-            name = function.get("name") or "tool"
-            arguments = function.get("arguments", {})
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except (TypeError, ValueError):
-                    pass
-            lines.append(_format_tool_call(name, arguments))
+            if isinstance(function, dict):
+                record = {
+                    "name": function.get("name") or "tool",
+                    "arguments": function.get("arguments", {}),
+                    "result": None,
+                    "has_result": False,
+                    "error": False,
+                }
+                if isinstance(record["arguments"], str):
+                    try:
+                        record["arguments"] = json.loads(record["arguments"])
+                    except (TypeError, ValueError):
+                        pass
+                records.append(record)
+                pending.append(record)
         if message.get("role") == "tool":
-            found = True
-            result = str(message.get("content") or "")
-            lines.append(_format_tool_result(result))
-    if not found:
+            record = pending.pop(0) if pending else None
+            if record is None:
+                record = {"name": "tool", "arguments": {}, "result": None,
+                          "has_result": False, "error": False}
+                records.append(record)
+            record["result"] = _parse_tool_content(message.get("content"))
+            record["has_result"] = True
+            record["error"] = bool(message.get("is_error") or message.get("error"))
+    return records
+
+
+def _format_trace_record(record: dict[str, Any], *, compact: bool) -> str:
+    if not record["has_result"]:
+        result = "∅"
+        status = "✅"
+    elif record["error"]:
+        result = _compact_value(record["result"], 120) if compact else _json_value(record["result"])
+        status = "❌"
+    else:
+        result = _compact_value(record["result"], 120) if compact else _json_value(record["result"])
+        status = "✅"
+    call_budget = TRACE_LINE_LIMIT - len("🔧  →  ") - len(status) - len(result)
+    call = _compact_call(record["name"], record["arguments"], limit=max(8, call_budget)) if compact else _compact_call(
+        record["name"], record["arguments"], limit=10**12,
+    )
+    line = f"🔧 {call} → {status} {result}"
+    if compact and len(line) > TRACE_LINE_LIMIT:
+        # The recursive value reducer normally handles this; this fallback covers
+        # unusually long tool names and key names, which are intentionally preserved.
+        return line
+    return line
+
+
+def _trace_text(messages: list[dict[str, Any]], *, compact: bool = True) -> str:
+    """Render the latest response's tool calls, compactly or in full."""
+    # A button belongs to the latest assistant response, not the entire session.
+    last_user = max((i for i, item in enumerate(messages)
+                     if isinstance(item, dict) and item.get("role") == "user"), default=-1)
+    messages = messages[last_user + 1:]
+    records = _trace_records(messages)
+    if not records:
         return "No tool trace is available for this response."
+    lines = ["🔎 **Tool trace**"]
+    lines.extend(_format_trace_record(record, compact=compact) for record in records)
     return "\n".join(lines)
 
 
@@ -89,6 +216,14 @@ async def send_ephemeral_trace(interaction: Any, text: str) -> None:
     await interaction.response.send_message(chunks[0], ephemeral=True)
     for chunk in chunks[1:]:
         await interaction.followup.send(chunk, ephemeral=True)
+
+
+async def send_trace_markdown(interaction: Any, discord_module: Any, text: str, session_key: str) -> None:
+    """Send the complete, non-truncated trace as a Markdown attachment."""
+    safe_key = re.sub(r"[^A-Za-z0-9_-]+", "_", str(session_key)).strip("_") or "response"
+    filename = f"tool-trace-{safe_key[:80]}.md"
+    file = discord_module.File(io.BytesIO(text.encode("utf-8")), filename=filename)
+    await interaction.response.send_message("Tool trace Markdown export", file=file, ephemeral=True)
 
 
 def _tracked_response_key(adapter: Any, target_message: Any, session_key: str) -> Any:
@@ -248,6 +383,7 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
         def __init__(self) -> None:
             super().__init__(timeout=None)
             self.add_item(self.ShowTraceButton())
+            self.add_item(self.ExportTraceButton())
             self.add_item(self.RegenerateButton())
             self.add_item(self.ContinueButton())
             self.add_item(self.DeleteButton())
@@ -266,6 +402,23 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
                     if not interaction.response.is_done():
                         await interaction.response.send_message(
                             "Le détail de cette réponse n’est plus disponible.", ephemeral=True)
+
+        class ExportTraceButton(discord_module.ui.Button):
+            def __init__(self) -> None:
+                super().__init__(label="Exporter en Markdown", style=discord_module.ButtonStyle.secondary,
+                                 custom_id=f"hermes:trace-export:{session_key}")
+
+            async def callback(self, interaction: Any) -> None:
+                try:
+                    await send_trace_markdown(
+                        interaction, discord_module,
+                        get_tool_trace_markdown(adapter, str(session_key)),
+                        str(session_key),
+                    )
+                except Exception:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(
+                            "L’export de cette réponse n’est plus disponible.", ephemeral=True)
 
         class RegenerateButton(discord_module.ui.Button):
             def __init__(self) -> None:
@@ -364,7 +517,16 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
 
 def get_tool_trace_text(adapter: Any, session_key: str) -> str:
     """Load a trace from the existing session store, or return a safe fallback."""
+    return _get_tool_trace(adapter, session_key, compact=True)
+
+
+def get_tool_trace_markdown(adapter: Any, session_key: str) -> str:
+    """Load the same trace presentation with complete, non-truncated values."""
+    return _get_tool_trace(adapter, session_key, compact=False)
+
+
+def _get_tool_trace(adapter: Any, session_key: str, *, compact: bool) -> str:
     store = getattr(adapter, "_session_store", None)
     entry = store.lookup_by_session_key(str(session_key)) if store is not None else None
     transcript = store.load_transcript(entry.session_id) if entry is not None else []
-    return _trace_text(transcript)
+    return _trace_text(transcript, compact=compact)
