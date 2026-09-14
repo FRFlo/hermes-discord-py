@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -90,6 +91,78 @@ async def send_ephemeral_trace(interaction: Any, text: str) -> None:
         await interaction.followup.send(chunk, ephemeral=True)
 
 
+def _tracked_response_key(adapter: Any, target_message: Any, session_key: str) -> Any:
+    target_id = str(getattr(target_message, "id", "") or "")
+    tracked = getattr(adapter, "_hermes_response_message_ids", {})
+    return next(
+        (key for key, ids in reversed(list(tracked.items()))
+         if key[0] == str(session_key) and target_id in ids),
+        None,
+    )
+
+
+async def delete_response_turn_from_session(
+    adapter: Any, session_key: str, inbound_id: str,
+) -> bool:
+    """Remove the selected user/assistant turn while preserving later turns."""
+    store = getattr(adapter, "_session_store", None)
+    entry = store.lookup_by_session_key(str(session_key)) if store is not None else None
+    if entry is None:
+        return False
+
+    history = await asyncio.to_thread(store.load_transcript, entry.session_id)
+    start = next(
+        (index for index, message in enumerate(history)
+         if message.get("role") == "user" and str(message.get("message_id") or "") == str(inbound_id)),
+        None,
+    )
+    if start is None:
+        return False
+    end = next(
+        (index for index in range(start + 1, len(history)) if history[index].get("role") == "user"),
+        len(history),
+    )
+    rewritten = [*history[:start], *history[end:]]
+    changed = await asyncio.to_thread(
+        store.rewrite_transcript, entry.session_id, rewritten,
+        active_only=True, reject_active_turn_lease=True,
+    )
+    if not changed:
+        return False
+    entry.last_prompt_tokens = 0
+    runner = getattr(adapter, "gateway_runner", None)
+    evict = getattr(runner, "_evict_cached_agent", None)
+    if callable(evict):
+        evict(str(session_key))
+    return True
+
+
+async def delete_tracked_response(
+    adapter: Any, target_message: Any, session_key: str, *, delete_session: bool = False,
+) -> None:
+    """Delete every Discord chunk belonging to the selected assistant response."""
+    target_id = str(getattr(target_message, "id", "") or "")
+    tracked = getattr(adapter, "_hermes_response_message_ids", {})
+    response_key = _tracked_response_key(adapter, target_message, session_key)
+    if delete_session:
+        if response_key is None or not await delete_response_turn_from_session(
+            adapter, str(session_key), str(response_key[1]),
+        ):
+            raise RuntimeError("Could not remove the selected response from the session")
+    message_ids = list(tracked.pop(response_key, [])) if response_key is not None else []
+    if target_id and target_id not in message_ids:
+        message_ids.append(target_id)
+
+    channel_id = str(getattr(getattr(target_message, "channel", None), "id", "") or "")
+    for message_id in message_ids:
+        if channel_id:
+            await adapter.delete_message(channel_id, message_id)
+
+    session_keys = getattr(adapter, "_hermes_session_keys_by_message_id", {})
+    for message_id in message_ids:
+        session_keys.pop(str(message_id), None)
+
+
 def _format_tool_call(name: Any, arguments: Any, *, inline_limit: int = 180) -> str:
     """Render a persisted call like the model's function-call representation."""
     safe_name = _safe_code_name(name)
@@ -158,6 +231,9 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
                     if not interaction.response.is_done():
                         await interaction.response.send_message(
                             "L’action a échoué. Vous pouvez réessayer.", ephemeral=True)
+                    else:
+                        await interaction.followup.send(
+                            "L’action a échoué. Vous pouvez réessayer.", ephemeral=True)
 
         class CancelButton(discord_module.ui.Button):
             def __init__(self) -> None:
@@ -201,12 +277,30 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
                     if not await adapter._check_slash_authorization(interaction, "/retry"):
                         return
 
+                    target_message = getattr(interaction, "message", None)
+
                     async def regenerate(confirmed_interaction: Any) -> None:
-                        # _run_simple_slash performs the normal authorization gate and
-                        # defers the interaction before starting the potentially long turn.
-                        await adapter._run_simple_slash(
-                            confirmed_interaction, "/retry", "Régénération en cours~",
+                        response_key = _tracked_response_key(
+                            adapter, target_message, str(session_key),
                         )
+                        if response_key is None:
+                            raise RuntimeError("Could not identify the response to regenerate")
+                        await confirmed_interaction.response.edit_message(
+                            content="La réponse va être régénérée.", view=None,
+                        )
+                        await delete_tracked_response(adapter, target_message, str(session_key))
+                        # /retry atomically removes the previous user/assistant turn from
+                        # the transcript before replaying the original user message.
+                        event = adapter._build_slash_event(confirmed_interaction, "/retry")
+                        chat_id = str(getattr(getattr(target_message, "channel", None), "id", "") or "")
+                        pending = getattr(adapter, "_hermes_pending_response_turns", None)
+                        if pending is None:
+                            pending = adapter._hermes_pending_response_turns = {}
+                        pending[chat_id] = (str(session_key), str(response_key[1]))
+                        try:
+                            await adapter.handle_message(event)
+                        finally:
+                            pending.pop(chat_id, None)
 
                     await interaction.response.send_message(
                         "Voulez-vous vraiment régénérer toute la réponse ?",
@@ -249,8 +343,9 @@ def build_tool_trace_view(discord_module: Any, adapter: Any, session_key: str) -
 
                     async def delete(confirmed_interaction: Any) -> None:
                         await confirmed_interaction.response.defer(ephemeral=True)
-                        if target_message is not None and hasattr(target_message, "delete"):
-                            await target_message.delete()
+                        await delete_tracked_response(
+                            adapter, target_message, str(session_key), delete_session=True,
+                        )
                         await confirmed_interaction.followup.send(
                             "Réponse supprimée.", ephemeral=True)
 

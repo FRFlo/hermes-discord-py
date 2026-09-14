@@ -56,6 +56,33 @@ class MessagingMixin:
                 return cache[key]
         return None
 
+    def _pending_response_turn(self, chat_id: Any) -> tuple[Optional[str], Optional[str]]:
+        """Return the response identity temporarily supplied by an action-button retry."""
+        pending = getattr(self, "_hermes_pending_response_turns", {}).get(str(chat_id))
+        if not pending:
+            return None, None
+        return str(pending[0]), str(pending[1])
+
+    async def _track_response_message_ids(
+        self, session_key: str, inbound_id: str, message_ids: List[str],
+    ) -> None:
+        """Associate all Discord chunks with one inbound turn, in memory and on disk."""
+        normalized = [str(message_id) for message_id in message_ids]
+        tracked = getattr(self, "_hermes_response_message_ids", None)
+        if tracked is None:
+            tracked = self._hermes_response_message_ids = {}
+        response_ids = tracked.setdefault((str(session_key), str(inbound_id)), [])
+        response_ids.extend(message_id for message_id in normalized if message_id not in response_ids)
+        for message_id in normalized:
+            self._remember_response_session_key(message_id, session_key)
+
+        store = getattr(self, "_session_store", None)
+        entry = store.lookup_by_session_key(str(session_key)) if store is not None else None
+        db = getattr(store, "_db", None) if entry is not None else None
+        record_ids = getattr(db, "record_discord_response_message_ids", None)
+        if callable(record_ids):
+            await asyncio.to_thread(record_ids, entry.session_id, str(inbound_id), normalized)
+
     def _configured_system_channel_id(
         self, content: str, metadata: Optional[Dict[str, Any]],
     ) -> Optional[str]:
@@ -216,6 +243,8 @@ class MessagingMixin:
             message_ids = []
             reference = self._reply_reference_for_send(reply_to, channel)
             session_key = self._response_session_key(metadata, reply_to)
+            pending_session_key, pending_inbound_id = self._pending_response_turn(channel.id)
+            session_key = session_key or pending_session_key
             for i, chunk in enumerate(chunks):
                 if self._reply_to_mode == "all":
                     chunk_reference = reference
@@ -256,19 +285,9 @@ class MessagingMixin:
                 elif not _looks_like_nonconversational_history_message(content):
                     self._last_self_message_id[_target_id] = message_ids[-1]
                 inbound_id = metadata.get("_hermes_inbound_message_id") if metadata else None
+                inbound_id = inbound_id or pending_inbound_id
                 if session_key and inbound_id:
-                    tracked = getattr(self, "_hermes_response_message_ids", None)
-                    if tracked is None:
-                        tracked = self._hermes_response_message_ids = {}
-                    tracked.setdefault((str(session_key), str(inbound_id)), []).extend(message_ids)
-                    store = getattr(self, "_session_store", None)
-                    entry = store.lookup_by_session_key(str(session_key)) if store is not None else None
-                    db = getattr(store, "_db", None) if entry is not None else None
-                    if db is not None and entry is not None:
-                        await asyncio.to_thread(
-                            db.record_discord_response_message_ids,
-                            entry.session_id, str(inbound_id), message_ids,
-                        )
+                    await self._track_response_message_ids(session_key, str(inbound_id), message_ids)
                 # Tool-progress messages are deliberately transient on Discord.  Delete
                 # them only after a successful final response, leaving failed turns useful.
                 if final_delivery:
@@ -422,6 +441,8 @@ class MessagingMixin:
             # Attach the actions at that point too; otherwise only the less common
             # direct-send final path gets the buttons.
             session_key = self._response_session_key(metadata, message_id)
+            pending_session_key, pending_inbound_id = self._pending_response_turn(chat_id)
+            session_key = session_key or pending_session_key
             final_view = None
             if finalize and session_key:
                 from ..views.tool_trace import build_tool_trace_view
@@ -434,9 +455,16 @@ class MessagingMixin:
             # Pre-flight oversize: final edits split-and-deliver; streaming edits truncate in place.
             if len(formatted) > self.MAX_MESSAGE_LENGTH:
                 if finalize:
-                    return await self._edit_overflow_split(
+                    result = await self._edit_overflow_split(
                         channel, msg, message_id, content, view=final_view,
                     )
+                    inbound_id = (metadata or {}).get("reply_to_message_id") or pending_inbound_id
+                    if result.success and session_key and inbound_id:
+                        await self._track_response_message_ids(
+                            session_key, str(inbound_id),
+                            [message_id, *result.continuation_message_ids],
+                        )
+                    return result
                 formatted = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)[0]
                 _saturated_preview = True
                 # Saturated-preview dedup: past the cap every edit is the same text; skip until finalize.
@@ -460,9 +488,16 @@ class MessagingMixin:
                 # Reactive split: format_message inflation can exceed 2,000 (50035) even after pre-flight.
                 if self._is_length_overflow_error(edit_err):
                     if finalize:
-                        return await self._edit_overflow_split(
+                        result = await self._edit_overflow_split(
                             channel, msg, message_id, content, view=final_view,
                         )
+                        inbound_id = (metadata or {}).get("reply_to_message_id") or pending_inbound_id
+                        if result.success and session_key and inbound_id:
+                            await self._track_response_message_ids(
+                                session_key, str(inbound_id),
+                                [message_id, *result.continuation_message_ids],
+                            )
+                        return result
                     truncated = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)[0]
                     if self._last_overflow_preview.get(_preview_key) == truncated:
                         # Saturated-preview dedup (see pre-flight path above).
@@ -473,6 +508,11 @@ class MessagingMixin:
                     raise
             result = SendResult(success=True, message_id=message_id)
             if finalize:
+                inbound_id = (metadata or {}).get("reply_to_message_id") or pending_inbound_id
+                if session_key and inbound_id:
+                    await self._track_response_message_ids(
+                        session_key, str(inbound_id), [message_id],
+                    )
                 await self._record_response_async((metadata or {}).get("reply_to_message_id"), result, content, True)
             return result
         except Exception as e:  # pragma: no cover - defensive logging
