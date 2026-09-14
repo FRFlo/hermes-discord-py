@@ -188,24 +188,8 @@ def split_discord_messages(text: str, *, limit: int = 1900) -> list[str]:
     every follow-up remains sendable. A margin is intentional: it leaves room
     for Discord/API wrappers without relying on the exact platform ceiling.
     """
-    if not text:
-        return []
-    chunks: list[str] = []
-    current = ""
-    for line in text.splitlines(keepends=True):
-        while len(line) > limit:
-            if current:
-                chunks.append(current.rstrip("\n"))
-                current = ""
-            chunks.append(line[:limit])
-            line = line[limit:]
-        if current and len(current) + len(line) > limit:
-            chunks.append(current.rstrip("\n"))
-            current = ""
-        current += line
-    if current:
-        chunks.append(current.rstrip("\n"))
-    return chunks
+    from services.markdown import split_discord_markdown
+    return split_discord_markdown(text, limit=limit)
 
 
 async def send_ephemeral_trace(interaction: Any, text: str) -> None:

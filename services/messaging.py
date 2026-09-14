@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from gateway.platforms.base import SendResult
 from gateway.platforms.event import MessageEvent, ProcessingOutcome
 from .. import adapter as _adapter
+from .markdown import split_discord_markdown
 
 logger = _adapter.logger
 discord = _adapter.discord
@@ -25,6 +26,10 @@ class MessagingMixin:
     """Own outbound Discord message and reaction behavior."""
 
     _RESPONSE_SESSION_KEY_CACHE_LIMIT = 4096
+
+    def _split_formatted_message(self, content: str, limit: int) -> List[str]:
+        """Split outbound text while preserving Discord Markdown across chunks."""
+        return split_discord_markdown(content, limit=limit)
 
     def _remember_response_session_key(self, message_id: Any, session_key: Any) -> None:
         """Associate an inbound/outbound Discord message with its Hermes session."""
@@ -238,7 +243,7 @@ class MessagingMixin:
                 return await self._record_response_async(reply_to, result, content, final_delivery)
             formatted = self.format_message(content)
             chunks = self._cap_split_chunks(
-                self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+                self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH)
             )
             message_ids = []
             reference = self._reply_reference_for_send(reply_to, channel)
@@ -327,7 +332,7 @@ class MessagingMixin:
         """Create a forum thread post with the message as starter (forum channels reject direct
         sends; name from the first line). Chunk failures land in ``raw_response['warnings']``."""
         formatted = self.format_message(content)
-        chunks = self._cap_split_chunks(self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH))
+        chunks = self._cap_split_chunks(self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH))
         thread_name = _derive_forum_thread_name(content)
         starter_content = chunks[0] if chunks else thread_name
         try:
@@ -465,7 +470,7 @@ class MessagingMixin:
                             [message_id, *result.continuation_message_ids],
                         )
                     return result
-                formatted = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)[0]
+                formatted = self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH)[0]
                 _saturated_preview = True
                 # Saturated-preview dedup: past the cap every edit is the same text; skip until finalize.
                 # Re-sending it is a visual no-op that still counts against Discord's edit rate limit — skip
@@ -498,7 +503,7 @@ class MessagingMixin:
                                 [message_id, *result.continuation_message_ids],
                             )
                         return result
-                    truncated = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)[0]
+                    truncated = self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH)[0]
                     if self._last_overflow_preview.get(_preview_key) == truncated:
                         # Saturated-preview dedup (see pre-flight path above).
                         return SendResult(success=True, message_id=message_id)
@@ -545,7 +550,7 @@ class MessagingMixin:
         A continuation failure still reports success plus ``partial_overflow`` so the consumer
         delivers the tail; only a first-chunk edit failure returns ``success=False``."""
         formatted = self.format_message(content)
-        chunks = self._cap_split_chunks(self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH))
+        chunks = self._cap_split_chunks(self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH))
         if len(chunks) <= 1:
             # Defensive: pre-flight should guarantee >1 chunk; otherwise edit normally.
             await msg.edit(content=chunks[0] if chunks else formatted)
