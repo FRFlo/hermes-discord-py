@@ -702,9 +702,29 @@ class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMi
     async def _on_tool_trace_interaction(self, interaction: Any) -> None:
         """Handle persistent trace buttons after a bot restart."""
         custom_id = getattr(getattr(interaction, "data", None), "get", lambda *_: None)("custom_id")
-        if not isinstance(custom_id, str) or not custom_id.startswith(("hermes:trace:", "hermes:trace-export:")):
+        prefixes = (
+            "hermes:trace:", "hermes:trace-export:", "hermes:regenerate:",
+            "hermes:delete:", "hermes:continue:",
+        )
+        if not isinstance(custom_id, str) or not custom_id.startswith(prefixes):
             return
         if getattr(getattr(interaction, "response", None), "is_done", lambda: True)():
+            return
+        if custom_id.startswith(("hermes:regenerate:", "hermes:delete:", "hermes:continue:")):
+            from .views.tool_trace import build_tool_trace_view
+            prefix, session_key = custom_id.rsplit(":", 1)
+            view = build_tool_trace_view(discord, self, session_key)
+            label_by_prefix = {
+                "hermes:regenerate": "Tout régénérer",
+                "hermes:delete": "Supprimer",
+                "hermes:continue": "Continuer",
+            }
+            button = next(
+                (item for item in view.children if item.label == label_by_prefix[prefix]),
+                None,
+            )
+            if button is not None:
+                await button.callback(interaction)
             return
         from .views.tool_trace import (
             get_tool_trace_markdown, get_tool_trace_text, send_ephemeral_trace,
