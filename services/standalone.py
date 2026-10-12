@@ -13,6 +13,7 @@ from .. import adapter as _adapter
 logger = _adapter.logger
 _DISCORD_STANDALONE_ERROR_BODY_LIMIT_BYTES = 8 * 1024
 _DISCORD_STANDALONE_JSON_BODY_LIMIT_BYTES = 1 * 1024 * 1024
+_DISCORD_SUPPRESS_EMBEDS_FLAG = 1 << 2
 
 
 def _derive_forum_thread_name(message: str) -> str:
@@ -207,7 +208,11 @@ async def _standalone_send(
                             {"id": str(idx), "filename": os.path.basename(path)}
                             for idx, path in enumerate(valid_media)
                         ]
-                        starter_message = {"content": caption or message, "attachments": attachments_meta}
+                        starter_message = {
+                            "content": caption or message,
+                            "attachments": attachments_meta,
+                            "flags": _DISCORD_SUPPRESS_EMBEDS_FLAG,
+                        }
                         payload_json = json.dumps({"name": thread_name, "message": starter_message})
                         form = aiohttp.FormData()
                         form.add_field("payload_json", payload_json, content_type="application/json")
@@ -228,7 +233,14 @@ async def _standalone_send(
                         # No media: JSON POST creates the thread with the text starter.
                         async with session.post(
                             thread_url, headers=json_headers,
-                            json={"name": thread_name, "message": {"content": message}}, **_req_kw,
+                            json={
+                                "name": thread_name,
+                                "message": {
+                                    "content": message,
+                                    "flags": _DISCORD_SUPPRESS_EMBEDS_FLAG,
+                                },
+                            },
+                            **_req_kw,
                         ) as resp:
                             data, err = await _standalone_response_json_or_error(resp, "Discord forum thread creation error")
                             if err:
@@ -245,7 +257,15 @@ async def _standalone_send(
             url = f"https://discord.com/api/v10/channels/{chat_id}/messages"
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), **_sess_kw) as session:
             if message.strip() or not media_files:
-                async with session.post(url, headers=json_headers, json={"content": message}, **_req_kw) as resp:
+                async with session.post(
+                    url,
+                    headers=json_headers,
+                    json={
+                        "content": message,
+                        "flags": _DISCORD_SUPPRESS_EMBEDS_FLAG,
+                    },
+                    **_req_kw,
+                ) as resp:
                     last_data, err = await _standalone_response_json_or_error(resp, "Discord API error")
                     if err:
                         return err
@@ -258,7 +278,12 @@ async def _standalone_send(
                     if caption_pending:
                         try:
                             async with session.post(
-                                url, headers=json_headers, json={"content": caption}, **_req_kw,
+                                url, headers=json_headers,
+                                json={
+                                    "content": caption,
+                                    "flags": _DISCORD_SUPPRESS_EMBEDS_FLAG,
+                                },
+                                **_req_kw,
                             ) as resp:
                                 if resp.status in {200, 201}:
                                     last_data = await _standalone_read_json_limited(
@@ -272,7 +297,10 @@ async def _standalone_send(
                     form = aiohttp.FormData()
                     filename = os.path.basename(media_path)
                     form.add_field(
-                        "payload_json", json.dumps({"content": caption if caption_pending else ""}),
+                        "payload_json", json.dumps({
+                            "content": caption if caption_pending else "",
+                            "flags": _DISCORD_SUPPRESS_EMBEDS_FLAG,
+                        }),
                         content_type="application/json",
                     )
                     if caption_pending:

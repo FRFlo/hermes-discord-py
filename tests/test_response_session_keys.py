@@ -45,6 +45,47 @@ def test_response_tracking_deduplicates_all_discord_chunks():
     assert messaging._response_session_key(None, "continuation-2") == "session-1"
 
 
+def test_outbound_message_suppresses_link_embeds():
+    class Message:
+        id = 30
+
+    class Channel:
+        id = 20
+
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, **kwargs):
+            self.sent.append(kwargs)
+            return Message()
+
+    messaging = _messaging()
+    channel = Channel()
+    messaging._client = object()
+    messaging._reply_to_mode = "first"
+    messaging.MAX_MESSAGE_LENGTH = 2000
+    messaging._last_self_message_id = {}
+    messaging._temporary_progress_ids = {}
+    messaging.format_message = lambda content: content
+    messaging._configured_system_channel_id = lambda *_args: None
+    messaging._is_forum_parent = lambda _channel: False
+    messaging._reply_reference_for_send = lambda *_args: None
+    messaging._pending_response_turn = lambda *_args: (None, None)
+
+    async def resolve_channel(_channel_id):
+        return channel
+
+    async def record_response(_reply_to, result, _content, _final_delivery):
+        return result
+
+    messaging._resolve_channel = resolve_channel
+    messaging._record_response_async = record_response
+
+    asyncio.run(messaging.send("20", "Here is https://example.com"))
+
+    assert channel.sent[0]["suppress_embeds"] is True
+
+
 def test_pending_regeneration_turn_supplies_response_identity():
     messaging = _messaging()
     messaging._hermes_pending_response_turns = {
@@ -108,6 +149,7 @@ def test_regenerated_final_edit_gets_buttons_and_is_tracked():
 
     assert result.success is True
     assert message.edits[0]["content"] == "regenerated answer"
+    assert message.edits[0]["suppress"] is True
     assert [button.label for button in message.edits[0]["view"].children] == [
         "Afficher le raisonnement", "Tout régénérer", "Continuer", "Supprimer",
     ]

@@ -80,12 +80,12 @@ class ThreadLifecycleMixin:
                 name=name, auto_archive_duration=auto_archive_duration, reason=reason,
             )
             if starter_message:
-                await thread.send(starter_message)
+                await thread.send(starter_message, suppress_embeds=True)
             return self._thread_created(thread, name)
         except Exception as direct_error:
             try:
                 seed_content = starter_message or f"\U0001f9f5 Thread created by Hermes: **{name}**"
-                seed_msg = await parent_channel.send(seed_content)
+                seed_msg = await parent_channel.send(seed_content, suppress_embeds=True)
                 thread = await seed_msg.create_thread(
                     name=name, auto_archive_duration=auto_archive_duration, reason=reason,
                 )
@@ -154,7 +154,8 @@ class ThreadLifecycleMixin:
                 last_direct_error = direct_error
                 try:
                     seed_msg = await message.channel.send(
-                        f"\U0001f9f5 Thread created by Hermes: **{thread_name}**"
+                        f"\U0001f9f5 Thread created by Hermes: **{thread_name}**",
+                        suppress_embeds=True,
                     )
                     thread = await seed_msg.create_thread(name=thread_name, auto_archive_duration=1440, reason=reason)
                     return self._stamp_auto_thread_name(thread, thread_name)
@@ -258,7 +259,10 @@ class ThreadLifecycleMixin:
             send = getattr(parent, "send", None)
             if send is None:
                 return None
-            seed_msg = await send(f"\U0001f9f5 Hermes handoff: **{thread_name}**")
+            seed_msg = await send(
+                f"\U0001f9f5 Hermes handoff: **{thread_name}**",
+                suppress_embeds=True,
+            )
             thread = await seed_msg.create_thread(
                 name=thread_name, auto_archive_duration=1440, reason=reason,
             )
@@ -308,6 +312,7 @@ class ThreadLifecycleMixin:
         try:
             channel = await self._resolve_channel(_prompt_target_id(chat_id, metadata))
             send_kwargs, view = build(channel)
+            send_kwargs["suppress_embeds"] = True
             msg = await channel.send(**send_kwargs)
             if view is not None:
                 view._message = msg

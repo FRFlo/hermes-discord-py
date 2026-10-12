@@ -237,7 +237,11 @@ class MessagingMixin:
                 else:  # "first" (default) or "off"
                     chunk_reference = reference if i == 0 else None
                 try:
-                    send_kwargs = {"content": chunk, "reference": chunk_reference}
+                    send_kwargs = {
+                        "content": chunk,
+                        "reference": chunk_reference,
+                        "suppress_embeds": True,
+                    }
                     # Only the last final message gets the on-demand trace button.  The
                     # trace itself is loaded lazily from the existing session store.
                     if final_delivery and i == len(chunks) - 1 and session_key:
@@ -317,7 +321,9 @@ class MessagingMixin:
         thread_name = _derive_forum_thread_name(content)
         starter_content = chunks[0] if chunks else thread_name
         try:
-            thread = await forum_channel.create_thread(name=thread_name, content=starter_content)
+            thread = await forum_channel.create_thread(
+                name=thread_name, content=starter_content, suppress_embeds=True,
+            )
         except Exception as e:
             logger.error("[%s] Failed to create forum thread in %s: %s", self.name, forum_channel.id, e)
             return SendResult(success=False, error=f"Forum thread creation failed: {e}")
@@ -326,7 +332,7 @@ class MessagingMixin:
         warnings: list[str] = []
         for chunk in chunks[1:]:
             try:
-                msg = await thread_channel.send(content=chunk)
+                msg = await thread_channel.send(content=chunk, suppress_embeds=True)
                 message_ids.append(str(msg.id))
             except Exception as e:
                 warning = f"Failed to send follow-up chunk to forum thread {thread_id}: {e}"
@@ -351,6 +357,7 @@ class MessagingMixin:
                     hint = getattr(files[0], "filename", "") or ""
             thread_name = _derive_forum_thread_name(hint) if hint.strip() else "New Post"
         kwargs: Dict[str, Any] = {"name": thread_name}
+        kwargs["suppress_embeds"] = True
         if content:
             kwargs["content"] = content
         if file is not None:
@@ -465,11 +472,11 @@ class MessagingMixin:
                 self._last_overflow_preview.pop(_preview_key, None)
             try:
                 if final_view is not None:
-                    await msg.edit(content=formatted, view=final_view)
+                    await msg.edit(content=formatted, view=final_view, suppress=True)
                     with suppress(Exception):
                         self._client.add_view(final_view)
                 else:
-                    await msg.edit(content=formatted)
+                    await msg.edit(content=formatted, suppress=True)
                 if _saturated_preview:
                     self._last_overflow_preview[_preview_key] = formatted
             except Exception as edit_err:
@@ -489,7 +496,7 @@ class MessagingMixin:
                     if self._last_overflow_preview.get(_preview_key) == truncated:
                         # Saturated-preview dedup (see pre-flight path above).
                         return SendResult(success=True, message_id=message_id)
-                    await msg.edit(content=truncated)
+                    await msg.edit(content=truncated, suppress=True)
                     self._last_overflow_preview[_preview_key] = truncated
                 else:
                     raise
@@ -534,10 +541,10 @@ class MessagingMixin:
         chunks = self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH)
         if len(chunks) <= 1:
             # Defensive: pre-flight should guarantee >1 chunk; otherwise edit normally.
-            await msg.edit(content=chunks[0] if chunks else formatted)
+            await msg.edit(content=chunks[0] if chunks else formatted, suppress=True)
             return SendResult(success=True, message_id=message_id)
         try:
-            await msg.edit(content=chunks[0])
+            await msg.edit(content=chunks[0], suppress=True)
         except Exception as e:
             logger.error(
                 "[%s] Overflow split: first-chunk edit failed: %s", self.name, e, exc_info=True,
@@ -557,7 +564,11 @@ class MessagingMixin:
                 # Prior message without to_reference (duck-typed): build the reference from ids.
                 reference = self._message_reference_from_ids(prev_msg.id, channel)
             try:
-                send_kwargs = {"content": chunk, "reference": reference}
+                send_kwargs = {
+                    "content": chunk,
+                    "reference": reference,
+                    "suppress_embeds": True,
+                }
                 if view is not None and index == len(chunks) - 1:
                     send_kwargs["view"] = view
                 sent = await channel.send(**send_kwargs)
@@ -568,7 +579,11 @@ class MessagingMixin:
                     self.name, send_err,
                 )
                 try:
-                    retry_kwargs = {"content": chunk, "reference": None}
+                    retry_kwargs = {
+                        "content": chunk,
+                        "reference": None,
+                        "suppress_embeds": True,
+                    }
                     if view is not None and index == len(chunks) - 1:
                         retry_kwargs["view"] = view
                     sent = await channel.send(**retry_kwargs)

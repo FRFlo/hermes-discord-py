@@ -219,9 +219,13 @@ async def send_ephemeral_trace(interaction: Any, text: str) -> None:
     chunks = split_discord_messages(text)
     if not chunks:
         chunks = ["No tool trace is available for this response."]
-    await interaction.response.send_message(chunks[0], ephemeral=True)
+    await interaction.response.send_message(
+        chunks[0], ephemeral=True, suppress_embeds=True,
+    )
     for chunk in chunks[1:]:
-        await interaction.followup.send(chunk, ephemeral=True)
+        await interaction.followup.send(
+            chunk, ephemeral=True, suppress_embeds=True,
+        )
 
 
 async def send_trace_markdown(interaction: Any, discord_module: Any, text: str, session_key: str) -> None:
@@ -229,7 +233,9 @@ async def send_trace_markdown(interaction: Any, discord_module: Any, text: str, 
     safe_key = re.sub(r"[^A-Za-z0-9_-]+", "_", str(session_key)).strip("_") or "response"
     filename = f"tool-trace-{safe_key[:80]}.md"
     file = discord_module.File(io.BytesIO(text.encode("utf-8")), filename=filename)
-    await interaction.response.send_message("Tool trace Markdown export", file=file, ephemeral=True)
+    await interaction.response.send_message(
+        "Tool trace Markdown export", file=file, ephemeral=True, suppress_embeds=True,
+    )
 
 
 def _tracked_response_key(adapter: Any, target_message: Any, session_key: str) -> Any:
