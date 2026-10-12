@@ -177,28 +177,6 @@ class MessagingMixin:
             logger.debug("Could not build reply-to reference: %s", e)
             return None
 
-    def _cap_split_chunks(self, chunks: List[str]) -> List[str]:
-        """Cap chunks at ``MAX_SPLIT_MESSAGES``: keep the first N-1 and replace the rest with a
-        notice so a degenerate turn can't flood the channel (full text stays in session history).
-
-        Cap the number of chunks sent for one logical response (#86581).
-        A degenerate turn can produce tens of thousands of characters; the 86581 incident delivered 60,698
-        chars as 31 back-to-back Discord messages. The full response remains available in the gateway
-        session history / logs. See #86581.
-        """
-        if len(chunks) <= self.MAX_SPLIT_MESSAGES:
-            return chunks
-        kept = chunks[: self.MAX_SPLIT_MESSAGES - 1]
-        dropped_chars = sum(len(c) for c in chunks[self.MAX_SPLIT_MESSAGES - 1 :])
-        notice = (
-            f"\n\n⚠️ **Response truncated** — this reply exceeded the "
-            f"delivery limit ({self.MAX_SPLIT_MESSAGES} messages). "
-            f"{dropped_chars} characters were not delivered; the full "
-            f"response is in the session logs."
-        )
-        kept.append(notice)
-        return kept
-
     async def send(
         self,
         chat_id: str,
@@ -242,9 +220,7 @@ class MessagingMixin:
                 result = await self._send_to_forum(channel, content)
                 return await self._record_response_async(reply_to, result, content, final_delivery)
             formatted = self.format_message(content)
-            chunks = self._cap_split_chunks(
-                self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH)
-            )
+            chunks = self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH)
             message_ids = []
             reference = self._reply_reference_for_send(reply_to, channel)
             session_key = self._response_session_key(metadata, reply_to)
@@ -337,7 +313,7 @@ class MessagingMixin:
         """Create a forum thread post with the message as starter (forum channels reject direct
         sends; name from the first line). Chunk failures land in ``raw_response['warnings']``."""
         formatted = self.format_message(content)
-        chunks = self._cap_split_chunks(self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH))
+        chunks = self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH)
         thread_name = _derive_forum_thread_name(content)
         starter_content = chunks[0] if chunks else thread_name
         try:
@@ -555,7 +531,7 @@ class MessagingMixin:
         A continuation failure still reports success plus ``partial_overflow`` so the consumer
         delivers the tail; only a first-chunk edit failure returns ``success=False``."""
         formatted = self.format_message(content)
-        chunks = self._cap_split_chunks(self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH))
+        chunks = self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH)
         if len(chunks) <= 1:
             # Defensive: pre-flight should guarantee >1 chunk; otherwise edit normally.
             await msg.edit(content=chunks[0] if chunks else formatted)

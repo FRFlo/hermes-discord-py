@@ -1,16 +1,21 @@
-"""Discord Markdown-aware message splitting."""
+"""Markdown-aware Discord message splitting."""
 
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
+
+from markdown_it import MarkdownIt
+from markdown_it.tree import SyntaxTreeNode
 
 
 _MARKERS = ("```", "***", "___", "||", "**", "__", "~~", "`", "*", "_")
 _LINK_RE = re.compile(r"\[[^\]\n]*\]\([^)\n]*\)")
+_PARSER = MarkdownIt("commonmark")
 
 
 def _syntax_states(text: str) -> tuple[list[tuple[str, ...]], list[bool]]:
-    """Return active Markdown markers and safe split positions for every offset."""
+    """Track Discord inline formatting ancestors and safe split positions."""
     states: list[tuple[str, ...]] = [()] * (len(text) + 1)
     safe: list[bool] = [True] * (len(text) + 1)
     active: list[str] = []
@@ -67,12 +72,39 @@ def _syntax_states(text: str) -> tuple[list[tuple[str, ...]], list[bool]]:
     return states, safe
 
 
-def split_discord_markdown(text: str, *, limit: int = 2000) -> list[str]:
-    """Split text without breaking Discord Markdown formatting.
+def _markdown_tree_boundaries(text: str) -> list[int]:
+    """Return source offsets at the ends of Markdown AST nodes.
 
-    Open markers are closed at the end of a chunk and reopened at the beginning
-    of the next one. Splits prefer whitespace/newlines, while code spans/fences
-    and Markdown links are kept intact whenever possible.
+    markdown-it-py supplies a real block AST. Its source maps let us favor
+    boundaries between paragraphs, lists, quotes, and code blocks instead of
+    cutting those structures at arbitrary whitespace.
+    """
+    line_end_offsets = [match.end() for match in re.finditer("\n", text)]
+    line_end_offsets.append(len(text))
+    tree = SyntaxTreeNode(_PARSER.parse(text))
+    boundaries: set[int] = set()
+
+    def visit(node: SyntaxTreeNode) -> None:
+        source_map = node.map if node.type != "root" else None
+        if source_map:
+            line_end = min(source_map[1], len(line_end_offsets))
+            if line_end:
+                offset = line_end_offsets[line_end - 1]
+                if 0 < offset < len(text):
+                    boundaries.add(offset)
+        for child in node.children:
+            visit(child)
+
+    visit(tree)
+    return sorted(boundaries)
+
+
+def split_discord_markdown(text: str, *, limit: int = 2000) -> list[str]:
+    """Split at Markdown AST boundaries when possible, restoring inline styles.
+
+    Block-level cuts are selected from markdown-it's parsed syntax tree. Oversized
+    individual blocks are split at safe inline boundaries, with open Discord
+    formatting closed and reopened around each chunk.
     """
     if not text:
         return []
@@ -80,6 +112,7 @@ def split_discord_markdown(text: str, *, limit: int = 2000) -> list[str]:
         raise ValueError("Discord message limit is too small for Markdown continuation")
 
     states, safe = _syntax_states(text)
+    tree_boundaries = _markdown_tree_boundaries(text)
     chunks: list[str] = []
     start = 0
     carry: tuple[str, ...] = ()
@@ -87,7 +120,6 @@ def split_discord_markdown(text: str, *, limit: int = 2000) -> list[str]:
         prefix = "".join(carry)
         best = min(len(text), start + limit - len(prefix))
         if best < len(text):
-            # Closing and reopening markers consume space in both messages.
             fallback = None
             while best > start:
                 ending = states[best]
@@ -98,19 +130,29 @@ def split_discord_markdown(text: str, *, limit: int = 2000) -> list[str]:
                     fallback = best
                 best -= 1
             if best == start:
-                # A marker/link longer than the limit cannot be made valid; make
-                # progress rather than looping forever.
                 best = fallback if fallback is not None else min(len(text), start + limit - len(prefix))
             else:
-                preferred = [pos for pos in range(best, start, -1) if safe[pos] and text[pos - 1].isspace()]
-                if preferred:
-                    candidate = preferred[0]
-                    suffix = "".join(reversed(states[candidate]))
-                    if len(prefix) + candidate - start + len(suffix) <= limit:
-                        best = candidate
+                lower_bound = max(start + 1, best - 240)
+                ast_candidates = [
+                    point for point in tree_boundaries
+                    if lower_bound <= point <= best and safe[point]
+                    and len(prefix) + point - start + len("".join(reversed(states[point]))) <= limit
+                ]
+                if ast_candidates:
+                    best = ast_candidates[-1]
+                else:
+                    preferred = [
+                        pos for pos in range(best, start, -1)
+                        if safe[pos] and text[pos - 1].isspace()
+                    ]
+                    if preferred:
+                        candidate = preferred[0]
+                        suffix = "".join(reversed(states[candidate]))
+                        if len(prefix) + candidate - start + len(suffix) <= limit:
+                            best = candidate
         ending = states[best]
         suffix = "".join(reversed(ending))
-        chunks.append(prefix + text[start:best].rstrip("\n") + suffix)
+        chunks.append(prefix + text[start:best] + suffix)
         carry = ending
         start = best
     return chunks

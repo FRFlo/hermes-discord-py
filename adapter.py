@@ -672,12 +672,6 @@ class DiscordAdapter(InitializationMixin, GeneratedCommandMixin, AuthorizationMi
     _SPLIT_THRESHOLD = 1900  # near the 2000-char split point
     supports_code_blocks = True  # Discord markdown renders fenced code blocks natively
     splits_long_messages = True  # send() chunks via truncate_message(MAX_MESSAGE_LENGTH)
-    # Safety ceiling on split deliveries: chunks beyond the cap become a notice (degenerate turns).
-    # Safety ceiling on split deliveries (#86581): a degenerate turn can produce tens of thousands of
-    # characters — without a cap the adapter posts every 2000-char chunk back-to-back and floods the channel
-    # (the incident delivered 60,698 chars as 31 messages).
-    MAX_SPLIT_MESSAGES = 8
-
     # Voice auto-disconnect after N idle seconds (discord.voice_channel_inactivity_timeout_seconds; 0 off).
     VOICE_TIMEOUT = 300
     # Minimum wait for one voice playback; the effective limit scales with clip duration.
