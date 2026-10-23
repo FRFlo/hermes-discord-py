@@ -22,7 +22,7 @@ class InitializationMixin:
 
 
     def __init__(self, config: PlatformConfig):
-        super().__init__(config, Platform.DISCORD)
+        super().__init__(config, Platform("discord-frflo"))
         self._client: Optional[commands.Bot] = None
         self._ready_event = asyncio.Event()
         self._allowed_user_ids: set = set()  # For button approval authorization
