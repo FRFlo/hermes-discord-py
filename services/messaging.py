@@ -472,11 +472,11 @@ class MessagingMixin:
                 self._last_overflow_preview.pop(_preview_key, None)
             try:
                 if final_view is not None:
-                    await msg.edit(content=formatted, view=final_view, suppress=True)
+                    await msg.edit(content=formatted, view=final_view)
                     with suppress(Exception):
                         self._client.add_view(final_view)
                 else:
-                    await msg.edit(content=formatted, suppress=True)
+                    await msg.edit(content=formatted)
                 if _saturated_preview:
                     self._last_overflow_preview[_preview_key] = formatted
             except Exception as edit_err:
@@ -496,7 +496,7 @@ class MessagingMixin:
                     if self._last_overflow_preview.get(_preview_key) == truncated:
                         # Saturated-preview dedup (see pre-flight path above).
                         return SendResult(success=True, message_id=message_id)
-                    await msg.edit(content=truncated, suppress=True)
+                    await msg.edit(content=truncated)
                     self._last_overflow_preview[_preview_key] = truncated
                 else:
                     raise
@@ -541,10 +541,10 @@ class MessagingMixin:
         chunks = self._split_formatted_message(formatted, self.MAX_MESSAGE_LENGTH)
         if len(chunks) <= 1:
             # Defensive: pre-flight should guarantee >1 chunk; otherwise edit normally.
-            await msg.edit(content=chunks[0] if chunks else formatted, suppress=True)
+            await msg.edit(content=chunks[0] if chunks else formatted)
             return SendResult(success=True, message_id=message_id)
         try:
-            await msg.edit(content=chunks[0], suppress=True)
+            await msg.edit(content=chunks[0])
         except Exception as e:
             logger.error(
                 "[%s] Overflow split: first-chunk edit failed: %s", self.name, e, exc_info=True,

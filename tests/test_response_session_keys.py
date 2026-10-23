@@ -103,8 +103,17 @@ def test_regenerated_final_edit_gets_buttons_and_is_tracked():
         def __init__(self):
             self.edits = []
 
-        async def edit(self, **kwargs):
-            self.edits.append(kwargs)
+        async def edit(self, *, content=None, embed=None, embeds=None, attachments=None,
+                       delete_after=None, allowed_mentions=None, view=None):
+            self.edits.append({
+                "content": content,
+                "embed": embed,
+                "embeds": embeds,
+                "attachments": attachments,
+                "delete_after": delete_after,
+                "allowed_mentions": allowed_mentions,
+                "view": view,
+            })
 
     class Channel:
         id = "channel-1"
@@ -149,7 +158,7 @@ def test_regenerated_final_edit_gets_buttons_and_is_tracked():
 
     assert result.success is True
     assert message.edits[0]["content"] == "regenerated answer"
-    assert message.edits[0]["suppress"] is True
+    assert "suppress" not in message.edits[0]
     assert [button.label for button in message.edits[0]["view"].children] == [
         "Afficher le raisonnement", "Tout régénérer", "Continuer", "Supprimer",
     ]
