@@ -402,43 +402,9 @@ def build_tool_trace_view(
     class ToolTraceView(discord_module.ui.View):
         def __init__(self) -> None:
             super().__init__(timeout=None)
-            self.add_item(self.ShowTraceButton())
-            self.add_item(self.ExportTraceButton())
             self.add_item(self.RegenerateButton())
             self.add_item(self.ContinueButton())
             self.add_item(self.DeleteButton())
-
-        class ShowTraceButton(discord_module.ui.Button):
-            def __init__(self) -> None:
-                super().__init__(label="Afficher le raisonnement", style=discord_module.ButtonStyle.secondary,
-                                 custom_id=_trace_custom_id("hermes:trace:", str(session_key), inbound_id))
-
-            async def callback(self, interaction: Any) -> None:
-                try:
-                    await send_ephemeral_trace(
-                        interaction, get_tool_trace_text(adapter, str(session_key), inbound_id),
-                    )
-                except Exception:
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message(
-                            "Le détail de cette réponse n’est plus disponible.", ephemeral=True)
-
-        class ExportTraceButton(discord_module.ui.Button):
-            def __init__(self) -> None:
-                super().__init__(label="Exporter en Markdown", style=discord_module.ButtonStyle.secondary,
-                                 custom_id=_trace_custom_id("hermes:trace-export:", str(session_key), inbound_id))
-
-            async def callback(self, interaction: Any) -> None:
-                try:
-                    await send_trace_markdown(
-                        interaction, discord_module,
-                        get_tool_trace_markdown(adapter, str(session_key), inbound_id),
-                        str(session_key),
-                    )
-                except Exception:
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message(
-                            "L’export de cette réponse n’est plus disponible.", ephemeral=True)
 
         class RegenerateButton(discord_module.ui.Button):
             def __init__(self) -> None:

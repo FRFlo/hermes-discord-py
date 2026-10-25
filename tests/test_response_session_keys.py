@@ -160,6 +160,6 @@ def test_regenerated_final_edit_gets_buttons_and_is_tracked():
     assert message.edits[0]["content"] == "regenerated answer"
     assert "suppress" not in message.edits[0]
     assert [button.label for button in message.edits[0]["view"].children] == [
-        "Afficher le raisonnement", "Tout régénérer", "Continuer", "Supprimer",
+        "Tout régénérer", "Continuer", "Supprimer",
     ]
     assert messaging._hermes_response_message_ids[("session-1", "inbound-1")] == ["20"]

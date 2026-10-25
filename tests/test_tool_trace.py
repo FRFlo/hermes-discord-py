@@ -37,11 +37,11 @@ def test_final_action_view_contains_all_response_buttons():
     view = build_tool_trace_view(discord, object(), "agent:discord:dm:42")
 
     assert [button.label for button in view.children] == [
-        "Afficher le raisonnement", "Exporter en Markdown", "Tout régénérer", "Continuer", "Supprimer",
+        "Tout régénérer", "Continuer", "Supprimer",
     ]
 
 
-def test_trace_buttons_encode_the_response_turn_identity():
+def test_response_actions_remain_after_trace_buttons_are_removed():
     from views.tool_trace import build_tool_trace_view
 
     class Button:
@@ -64,9 +64,11 @@ def test_trace_buttons_encode_the_response_turn_identity():
 
     view = build_tool_trace_view(discord, object(), "agent:discord:dm:42", "in-7")
 
-    assert view.children[0].custom_id == "hermes:trace:agent%3Adiscord%3Adm%3A42|in-7"
-    assert view.children[1].custom_id == "hermes:trace-export:agent%3Adiscord%3Adm%3A42|in-7"
-
+    assert [button.custom_id for button in view.children] == [
+        "hermes:regenerate:agent:discord:dm:42",
+        "hermes:continue:agent:discord:dm:42",
+        "hermes:delete:agent:discord:dm:42",
+    ]
 
 def test_format_tool_call_uses_code_call_shape():
     rendered = _format_tool_call("read_file", {"path": "README.md"})
