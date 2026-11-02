@@ -67,7 +67,7 @@ def test_outbound_message_suppresses_link_embeds():
     messaging._last_self_message_id = {}
     messaging._temporary_progress_ids = {}
     messaging.format_message = lambda content: content
-    messaging._configured_system_channel_id = lambda *_args: None
+    messaging._configured_system_user_id = lambda *_args: None
     messaging._is_forum_parent = lambda _channel: False
     messaging._reply_reference_for_send = lambda *_args: None
     messaging._pending_response_turn = lambda *_args: (None, None)

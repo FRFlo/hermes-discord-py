@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from adapter import _looks_like_nonconversational_history_message
 from services.messaging import MessagingMixin
-from services.standalone import _configured_system_channel_id as standalone_system_channel_id
+from services.standalone import _configured_system_user_id as standalone_system_user_id
 
 
 def _messaging(system_channel=None):
@@ -17,25 +17,25 @@ def test_gateway_shutdown_warning_is_nonconversational():
     assert _looks_like_nonconversational_history_message(message)
 
 
-def test_shutdown_warning_routes_to_configured_system_channel_without_metadata():
-    messaging = _messaging({"platform": "discord-frflo", "chat_id": "1548801731427700787"})
+def test_shutdown_warning_routes_to_configured_user_without_metadata():
+    messaging = _messaging({"platform": "discord-frflo", "user_id": "123456789012345678"})
 
-    assert messaging._configured_system_channel_id(
+    assert messaging._configured_system_user_id(
         "⚠️ Gateway shutting down — Your current task will be interrupted.", None,
-    ) == "1548801731427700787"
+    ) == "123456789012345678"
 
 
 def test_regular_message_does_not_route_to_system_channel():
-    messaging = _messaging({"platform": "discord-frflo", "chat_id": "1548801731427700787"})
+    messaging = _messaging({"platform": "discord-frflo", "user_id": "123456789012345678"})
 
-    assert messaging._configured_system_channel_id("Hello", None) is None
+    assert messaging._configured_system_user_id("Hello", None) is None
 
 
-def test_standalone_shutdown_warning_uses_same_system_channel():
+def test_standalone_shutdown_warning_uses_same_dm_recipient():
     config = SimpleNamespace(extra={
-        "system_channel": {"platform": "discord-frflo", "chat_id": "1548801731427700787"},
+        "system_channel": {"platform": "discord-frflo", "user_id": "123456789012345678"},
     })
 
-    assert standalone_system_channel_id(
+    assert standalone_system_user_id(
         config, "⚠️ Gateway shutting down — Your current task will be interrupted.",
-    ) == "1548801731427700787"
+    ) == "123456789012345678"
