@@ -88,15 +88,10 @@ class MessagingMixin:
         if callable(record_ids):
             await asyncio.to_thread(record_ids, entry.session_id, str(inbound_id), normalized)
 
-    def _configured_system_channel_id(
+    def _configured_system_user_id(
         self, content: str, metadata: Optional[Dict[str, Any]],
     ) -> Optional[str]:
-        """Return the configured channel selector for system messages.
-
-        The selector has the same shape as ``platforms.*.home_channel``.  Its
-        ``chat_id`` can point to an existing forum thread, keeping lifecycle/status
-        notifications together without creating a new forum post.
-        """
+        """Return the configured Discord user who receives system messages by DM."""
         if not (
             _metadata_marks_nonconversational(metadata)
             or _looks_like_nonconversational_history_message(content)
@@ -105,7 +100,7 @@ class MessagingMixin:
         extra = getattr(self.config, "extra", None)
         selector = extra.get("system_channel") if isinstance(extra, dict) else None
         if isinstance(selector, dict):
-            channel_id = selector.get("chat_id")
+            channel_id = selector.get("user_id")
         else:
             channel_id = None
         text = str(channel_id or "").strip()
@@ -201,10 +196,21 @@ class MessagingMixin:
 
         try:
             thread_id = None
-            if metadata and metadata.get("thread_id"):
+            system_user_id = self._configured_system_user_id(content, metadata)
+            if system_user_id:
+                user = await self._client.fetch_user(int(system_user_id))
+                dm_channel = await user.create_dm()
+                thread_id = str(dm_channel.id)
+            elif (
+                _metadata_marks_nonconversational(metadata)
+                or _looks_like_nonconversational_history_message(content)
+            ):
+                return SendResult(
+                    success=False,
+                    error="System message DM recipient is not configured (system_channel.user_id)",
+                )
+            elif metadata and metadata.get("thread_id"):
                 thread_id = metadata["thread_id"]
-            if not thread_id:
-                thread_id = self._configured_system_channel_id(content, metadata)
             nonconversational = _metadata_marks_nonconversational(metadata)
             final_delivery = bool(metadata and metadata.get("notify"))
             if thread_id:

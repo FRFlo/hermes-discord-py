@@ -28,13 +28,13 @@ def _remember_channel_is_forum(chat_id: str, is_forum: bool) -> None:
     _adapter._remember_channel_is_forum(chat_id, is_forum)
 
 
-def _configured_system_channel_id(pconfig: Any, message: str) -> Optional[str]:
-    """Resolve the dedicated system destination for legacy content-only sends."""
+def _configured_system_user_id(pconfig: Any, message: str) -> Optional[str]:
+    """Resolve the configured DM recipient for legacy content-only sends."""
     if not _adapter._looks_like_nonconversational_history_message(message):
         return None
     extra = getattr(pconfig, "extra", None)
     selector = extra.get("system_channel") if isinstance(extra, dict) else None
-    channel_id = selector.get("chat_id") if isinstance(selector, dict) else None
+    channel_id = selector.get("user_id") if isinstance(selector, dict) else None
     text = str(channel_id or "").strip()
     return text or None
 
@@ -175,15 +175,26 @@ async def _standalone_send(
         token = (get_secret("DISCORD_BOT_TOKEN", "") or "").strip()
     if not token:
         return {"error": "Discord standalone send: DISCORD_BOT_TOKEN is not set"}
-    system_channel_id = _configured_system_channel_id(pconfig, message)
-    if system_channel_id and not thread_id:
-        chat_id = system_channel_id
+    system_user_id = _configured_system_user_id(pconfig, message)
+    if _adapter._looks_like_nonconversational_history_message(message) and not system_user_id:
+        return {"error": "System message DM recipient is not configured (system_channel.user_id)"}
     try:
         from gateway.platforms.base import resolve_proxy_url, proxy_kwargs_for_aiohttp
         _proxy = resolve_proxy_url(platform_env_var="DISCORD_PROXY")
         _sess_kw, _req_kw = proxy_kwargs_for_aiohttp(_proxy)
         auth_headers = {"Authorization": f"Bot {token}"}
         json_headers = {**auth_headers, "Content-Type": "application/json"}
+        if system_user_id:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), **_sess_kw) as session:
+                async with session.post(
+                    "https://discord.com/api/v10/users/@me/channels", headers=json_headers,
+                    json={"recipient_id": system_user_id}, **_req_kw,
+                ) as resp:
+                    dm_data, err = await _standalone_response_json_or_error(resp, "Discord DM creation error")
+                    if err:
+                        return err
+                    chat_id = str(dm_data["id"])
+                    thread_id = None
         media_files = media_files or []
         last_data = None
         warnings = []
